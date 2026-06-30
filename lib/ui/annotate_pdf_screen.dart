@@ -6,9 +6,10 @@ import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart' hide PdfDocument;
 import 'package:pdf/widgets.dart' as pw;
-import 'package:pdf_render/pdf_render.dart' as render;
+import 'package:pdf_render_maintained/pdf_render.dart' as render;
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/ad_service.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
 
@@ -58,6 +59,7 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
   int _total = 0;
 
   static const _stamps = ['APPROVED', 'DRAFT', 'CONFIDENTIAL'];
+  static const double _canvasRenderWidth = 1000;
 
   @override
   void initState() {
@@ -107,7 +109,7 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
     setState(() { _loadingPage = true; _pageImage = null; });
     try {
       final page = await doc.getPage(_currentPage);
-final rendered = await page.render(width: 1000);
+      final rendered = await page.render(width: _canvasRenderWidth.round());
       final uiImage = await rendered.createImageIfNotAvailable();
       final bd =
           await uiImage.toByteData(format: ui.ImageByteFormat.png);
@@ -183,10 +185,10 @@ final rendered = await page.render(width: 1000);
             order: img.ChannelOrder.rgba,
           );
 
-          // Draw annotations onto baseImg
           final strokes = _annotations[i] ?? [];
           if (strokes.isNotEmpty) {
-            // Use CustomPainter to render into a picture then composite
+            final scale = pageImg.width / _canvasRenderWidth;
+            _compositeStrokes(baseImg, strokes, scale);
           }
 
           final encoded =
@@ -210,7 +212,7 @@ final rendered = await page.render(width: 1000);
             .insertDocument(out.path, thumbnailPath: thumbPath);
         PDFManager.hapticFeedbackSuccess();
         if (mounted) {
-          _snack('Saved: ${out.path.split('/').last}');
+          _snack('Saved: ${fileName(out.path)}');
           Navigator.of(context).pop();
         }
       } catch (e) {
@@ -220,6 +222,34 @@ final rendered = await page.render(width: 1000);
         if (mounted) setState(() => _isProcessing = false);
       }
     });
+  }
+
+  void _compositeStrokes(img.Image dest, List<_Stroke> strokes, double scale) {
+    for (final stroke in strokes) {
+      if (stroke.points.length < 2) continue;
+
+      final color = stroke.isEraser
+          ? img.ColorRgba8(255, 255, 255, 255)
+          : img.ColorRgba8(
+              (stroke.color.r * 255).round(),
+              (stroke.color.g * 255).round(),
+              (stroke.color.b * 255).round(),
+              (stroke.color.a * 255).round(),
+            );
+      final thickness = (stroke.width * scale).round().clamp(1, 120);
+
+      for (var j = 0; j < stroke.points.length - 1; j++) {
+        img.drawLine(
+          dest,
+          x1: (stroke.points[j].dx * scale).round(),
+          y1: (stroke.points[j].dy * scale).round(),
+          x2: (stroke.points[j + 1].dx * scale).round(),
+          y2: (stroke.points[j + 1].dy * scale).round(),
+          color: color,
+          thickness: thickness,
+        );
+      }
+    }
   }
 
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(

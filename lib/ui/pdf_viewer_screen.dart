@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:pdf_render/pdf_render.dart' as render;
+import 'package:pdf_render_maintained/pdf_render.dart' as render;
 import 'package:pdfx/pdfx.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:quick_pdf/services/share_service.dart';
+import 'package:quick_pdf/ui/widgets/doc_thumb_hero.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 
 class PDFViewerScreen extends StatefulWidget {
   final String pdfPath;
@@ -22,6 +24,7 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
   int _totalPages = 0;
   bool _nightMode = false;
   bool _showCounter = false;
+  bool _documentReady = false;
   Timer? _counterTimer;
 
   // Thumbnails for the strip
@@ -29,7 +32,7 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
   bool _thumbsLoading = false;
 
   String get _filename =>
-      widget.pdfPath.split('/').last.replaceAll('.pdf', '');
+      fileStem(widget.pdfPath);
 
   @override
   void initState() {
@@ -177,10 +180,24 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
         children: [
           // ── PDF view ──
           Hero(
-            tag: widget.heroTag ?? widget.pdfPath,
-            child: const SizedBox.shrink(),
+            tag: widget.heroTag ?? docThumbHeroTag(widget.pdfPath),
+            flightShuttleBuilder: docThumbHeroFlightShuttle,
+            child: Material(
+              type: MaterialType.transparency,
+              child: SizedBox.expand(
+                child: ColoredBox(
+                  color: _nightMode
+                      ? Colors.black
+                      : Theme.of(context).colorScheme.surface,
+                ),
+              ),
+            ),
           ),
-          ColorFiltered(
+          AnimatedOpacity(
+            opacity: _documentReady ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+            child: ColorFiltered(
             colorFilter: _nightMode
                 ? const ColorFilter.matrix([
                     -1, 0, 0, 0, 255,
@@ -195,12 +212,16 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
               pageSnapping: false,
               onPageChanged: _onPageChanged,
               onDocumentLoaded: (doc) {
-                setState(() => _totalPages = doc.pagesCount);
+                setState(() {
+                  _totalPages = doc.pagesCount;
+                  _documentReady = true;
+                });
                 _loadThumbs();
               },
               onDocumentError: (error) =>
                   debugPrint('PDF viewer error: $error'),
             ),
+          ),
           ),
 
           // ── Floating page counter ──
@@ -288,7 +309,7 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
 
   Future<void> _share(BuildContext context) async {
     try {
-      await Share.shareXFiles(
+      await ShareService.files(
         [XFile(widget.pdfPath)],
         subject: _filename,
       );

@@ -2,8 +2,9 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:pdf_render/pdf_render.dart' as render;
+import 'package:pdf_render_maintained/pdf_render.dart' as render;
 import 'package:quick_pdf/core/pdf_manager.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
@@ -98,7 +99,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       PDFManager.hapticFeedbackSuccess();
       await AdService().recordToolCompletion();
       if (mounted) {
-        _snack('Watermark applied: ${out.path.split('/').last}');
+        _snack('Watermark applied: ${fileName(out.path)}');
         setState(() { _file = null; _previewBytes = null; });
       }
     } catch (e) {
@@ -130,7 +131,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
                     leading: Icon(Icons.picture_as_pdf, color: cs.error),
                     title: Text(
                       _file != null
-                          ? _file!.path.split('/').last
+                          ? fileName(_file!.path)
                           : 'Tap to pick a PDF',
                       style: TextStyle(
                         fontWeight: _file != null

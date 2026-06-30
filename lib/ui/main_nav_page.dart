@@ -1,37 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:quick_pdf/services/ad_service.dart';
-import 'package:quick_pdf/ui/home_screen.dart';
-import 'package:quick_pdf/ui/tools_screen.dart';
-import 'package:quick_pdf/ui/settings_screen.dart';
 
-class QuickPDFHomePage extends StatefulWidget {
-  const QuickPDFHomePage({super.key});
+class QuickPDFHomePage extends StatelessWidget {
+  final StatefulNavigationShell navigationShell;
 
-  @override
-  State<QuickPDFHomePage> createState() => _QuickPDFHomePageState();
-}
-
-class _QuickPDFHomePageState extends State<QuickPDFHomePage> {
-  int _index = 0;
-
-  static const _pages = <Widget>[
-    HomeScreen(),
-    ToolsScreen(),
-    SettingsScreen(),
-  ];
+  const QuickPDFHomePage({super.key, required this.navigationShell});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _index, children: _pages),
+      body: navigationShell,
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const _BannerAdArea(),
           NavigationBar(
-            selectedIndex: _index,
-            onDestinationSelected: (i) => setState(() => _index = i),
+            selectedIndex: navigationShell.currentIndex,
+            onDestinationSelected: navigationShell.goBranch,
             destinations: const [
               NavigationDestination(
                 icon: Icon(Icons.home_outlined),
@@ -76,6 +63,7 @@ class _BannerAdAreaState extends State<_BannerAdArea> {
   }
 
   void _loadAd() {
+    if (!AdService.shouldShowAds) return;
     _ad = BannerAd(
       adUnitId: AdService.bannerAdUnitId,
       size: AdSize.banner,
@@ -101,7 +89,9 @@ class _BannerAdAreaState extends State<_BannerAdArea> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_loaded || _ad == null) return const SizedBox.shrink();
+    if (!AdService.shouldShowAds || !_loaded || _ad == null) {
+      return const SizedBox.shrink();
+    }
     return Container(
       alignment: Alignment.center,
       width: double.infinity,

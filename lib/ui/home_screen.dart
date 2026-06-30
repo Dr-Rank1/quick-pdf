@@ -1,25 +1,19 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
-import 'package:quick_pdf/services/document_database.dart';
+import 'package:quick_pdf/providers/document_provider.dart';
+import 'package:quick_pdf/services/share_service.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
-import 'package:quick_pdf/services/ocr_service.dart';
-import 'package:quick_pdf/ui/compress_screen.dart';
-import 'package:quick_pdf/ui/convert_screen.dart';
-import 'package:quick_pdf/ui/merge_screen.dart';
-import 'package:quick_pdf/ui/format_converter_screen.dart';
-import 'package:quick_pdf/ui/ocr_text_screen.dart';
-import 'package:quick_pdf/ui/page_manager_screen.dart';
-import 'package:quick_pdf/ui/password_protect_screen.dart';
-import 'package:quick_pdf/ui/pdf_security_screen.dart';
-import 'package:quick_pdf/ui/watermark_screen.dart';
-import 'package:quick_pdf/ui/pdf_viewer_screen.dart';
-import 'package:quick_pdf/ui/scanner_screen.dart';
-import 'package:quick_pdf/ui/split_screen.dart';
+import 'package:quick_pdf/router/app_navigation.dart';
 import 'package:quick_pdf/ui/widgets/search_delegate.dart';
+import 'package:quick_pdf/ui/widgets/tools_catalog.dart';
 import 'package:quick_pdf/services/ad_service.dart';
+import 'package:quick_pdf/services/document_import_service.dart';
+import 'package:quick_pdf/ui/widgets/desktop_drop_zone.dart';
+import 'package:quick_pdf/ui/widgets/doc_thumb_hero.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 String _fmtSize(int bytes) {
   if (bytes < 1024) return '$bytes B';
@@ -42,18 +36,46 @@ String _relativeDate(String? isoDate) {
 
 enum _SortMode { recent, name, size, added }
 
-class HomeScreen extends StatefulWidget {
+int _gridCrossAxisCount(double width) {
+  if (width >= 900) return 6;
+  if (width >= 600) return 4;
+  return 2;
+}
+
+double _gridChildAspectRatio(int columns) {
+  switch (columns) {
+    case 6:
+      return 0.82;
+    case 4:
+      return 0.76;
+    default:
+      return 0.72;
+  }
+}
+
+List<Map<String, dynamic>> _skeletonMockDocs(int count) => List.generate(
+      count,
+      (i) => {
+        'path': '/skeleton/mock_$i.pdf',
+        'name': 'Sample document ${i + 1}.pdf',
+        'size': 245760 * (i + 1),
+        'thumbnail_path': null,
+        'lastOpened': DateTime.now().toIso8601String(),
+        'is_favourite': 0,
+      },
+    );
+
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
+class _HomeScreenState extends ConsumerState<HomeScreen>
     with SingleTickerProviderStateMixin {
-  bool _isProcessing = false;
-  final OcrService _ocrService = OcrService();
-  final _db = DocumentDatabase();
+  int _importDone = 0;
+  int _importTotal = 0;
   late final TabController _tabs;
 
   @override
@@ -66,130 +88,120 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     _tabs.dispose();
-    _ocrService.dispose();
     super.dispose();
   }
 
   // ─── Quick actions ─────────────────────────────────────────────────────────
 
-  Future<void> _quickScan() => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const ScannerScreen()),
-      );
+  Future<void> _quickScan() => context.pushScan();
 
   Future<void> _quickConvert() async {
     final r = await FilePickerService.pickMultipleFiles(
         allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp']);
     if (r == null || r.isEmpty || !mounted) return;
-    await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => ConvertScreen(initialImages: r)));
+    await context.pushConvert(r);
   }
 
   Future<void> _quickMerge() async {
     final r = await FilePickerService.pickMultipleFiles(allowedExtensions: ['pdf']);
     if (r == null || r.isEmpty || !mounted) return;
-    await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => MergeScreen(initialFiles: r)));
+    await context.pushMerge(r);
   }
 
   Future<void> _quickSplit() async {
     final r = await FilePickerService.pickMultipleFiles(allowedExtensions: ['pdf']);
     if (r == null || r.isEmpty || !mounted) return;
-    await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => SplitScreen(file: r.first)));
+    await context.pushSplit(r.first);
   }
 
   Future<void> _quickCompress() async {
     final r = await FilePickerService.pickMultipleFiles(allowedExtensions: ['pdf']);
     if (r == null || r.isEmpty || !mounted) return;
-    await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => CompressScreen(file: r.first)));
+    await context.pushCompress(r.first);
   }
 
   Future<void> _quickExtract() async {
     final r = await FilePickerService.pickMultipleFiles(
         allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png']);
     if (r == null || r.isEmpty || !mounted) return;
-    await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => OcrTextScreen(file: r.first)));
+    await context.pushOcr(r.first);
   }
 
-  Future<void> _quickFormat() => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const FormatConverterScreen()),
-      );
+  Future<void> _quickFormat() => context.pushFormatConverter();
 
   Future<void> _quickMetadata() async {
     final r = await FilePickerService.pickMultipleFiles(allowedExtensions: ['pdf']);
     if (r == null || r.isEmpty || !mounted) return;
-    await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => EditMetadataScreen(pdfFile: r.first)));
+    await context.pushEditMetadata(r.first);
   }
 
-  Future<void> _quickProtect() => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const PasswordProtectScreen()),
-      );
+  Future<void> _quickProtect() => context.pushPasswordProtect();
 
-  Future<void> _quickWatermark() => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const WatermarkScreen()),
-      );
+  Future<void> _quickWatermark() => context.pushWatermark();
 
   Future<void> _quickPageManager() async {
     final r =
         await FilePickerService.pickMultipleFiles(allowedExtensions: ['pdf']);
     if (r == null || r.isEmpty || !mounted) return;
-    await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => PageManagerScreen(pdfFile: r.first)));
+    await context.pushPageManager(r.first);
   }
 
   // ─── Document open ──────────────────────────────────────────────────────────
 
   Future<void> _onDocumentTap(String path) async {
-    await _db.updateLastOpened(path);
+    await ref.read(documentDatabaseProvider).updateLastOpened(path);
     if (!mounted) return;
     final ext = path.split('.').last.toLowerCase();
     if (['jpg', 'jpeg', 'png', 'bmp', 'webp'].contains(ext)) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => _ImageViewerScreen(path: path)),
-      );
+      await context.openImageViewer(path);
     } else {
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PDFViewerScreen(
-            pdfPath: path,
-            heroTag: 'doc_thumb_$path',
-          ),
-        ),
-      );
+      await context.openPdfViewer(path, heroTag: docThumbHeroTag(path));
     }
   }
 
   // ─── Add files ─────────────────────────────────────────────────────────────
+
+  Future<void> _importPaths(List<String> paths) async {
+    if (paths.isEmpty || !mounted) return;
+
+    setState(() {
+      _importDone = 0;
+      _importTotal = paths.length;
+    });
+
+    final count = await DocumentImportService.instance.importPaths(
+      paths,
+      onProgress: (done, total) {
+        if (mounted) {
+          setState(() {
+            _importDone = done;
+            _importTotal = total;
+          });
+        }
+      },
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _importDone = 0;
+      _importTotal = 0;
+    });
+
+    if (count > 0) {
+      AdService().recordToolCompletion();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Added $count file${count == 1 ? '' : 's'}'),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+  }
 
   Future<void> _addFiles() async {
     final result = await FilePickerService.pickMultipleFiles(
       allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
     );
     if (!mounted || result == null || result.isEmpty) return;
-
-    setState(() => _isProcessing = true);
-
-    for (final file in result) {
-      final pages = await _ocrService.extractText(file);
-      final textContent =
-          pages.isNotEmpty ? pages.map((p) => p.text).join('\n\n') : null;
-      final thumbPath = await PDFManager.generateThumbnail(file.path);
-      await _db.insertDocument(file.path,
-          textContent: textContent, thumbnailPath: thumbPath);
-    }
-
-    if (!mounted) return;
-    setState(() => _isProcessing = false);
-
-    AdService().recordToolCompletion();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(
-          'Added ${result.length} file${result.length == 1 ? '' : 's'}'),
-      behavior: SnackBarBehavior.floating,
-    ));
+    await _importPaths(result.map((f) => f.path).toList());
   }
 
   // ─── FAB quick-add bottom sheet ────────────────────────────────────────────
@@ -300,13 +312,16 @@ class _HomeScreenState extends State<HomeScreen>
               _DocumentGrid(
                 onDocumentTap: _onDocumentTap,
                 onDocumentDelete: (path) async {
-                  await _db.deleteDocument(path);
+                  await ref.read(documentDatabaseProvider).deleteDocument(path);
                   try { await File(path).delete(); } catch (_) {}
                 },
+                onImportDropped: _importPaths,
+                onScan: _quickScan,
+                onImport: _addFiles,
               ),
               // ── Tab 1: Tools ──
               _HomeToolsTab(
-                onAddFiles: _isProcessing ? null : _addFiles,
+                onAddFiles: _importTotal > 0 ? null : _addFiles,
                 onScan: _quickScan,
                 onConvert: _quickConvert,
                 onMerge: _quickMerge,
@@ -321,19 +336,14 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ],
           ),
-          if (_isProcessing)
-            ColoredBox(
-              color: Colors.black.withValues(alpha: 0.45),
-              child: const Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(color: Colors.white),
-                    SizedBox(height: 14),
-                    Text('Importing files…',
-                        style: TextStyle(color: Colors.white, fontSize: 15)),
-                  ],
-                ),
+          if (_importTotal > 0)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 88,
+              child: _ImportProgressPill(
+                done: _importDone,
+                total: _importTotal,
               ),
             ),
         ],
@@ -389,7 +399,7 @@ class _HomeToolsTabState extends State<_HomeToolsTab>
   late final AnimationController _ctrl;
   final List<Animation<double>> _anims = [];
 
-  static const _itemCount = 10; // tiles + headers
+  static const _itemCount = 20;
   static const _delay = Duration(milliseconds: 40);
 
   @override
@@ -424,110 +434,50 @@ class _HomeToolsTabState extends State<_HomeToolsTab>
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      children: [
-        _fade(0, _groupHeader(context, 'Create')),
-        _fade(1, _toolTile(context, Icons.camera_alt, Colors.blue.shade600,
-            'Scan Document', 'Use your camera to scan pages into a PDF', widget.onScan)),
-        _fade(1, _toolTile(context, Icons.image, Colors.green.shade600,
-            'Images to PDF', 'Combine JPG, PNG, WEBP photos into one PDF', widget.onConvert)),
-        _fade(1, _toolTile(context, Icons.folder_open_outlined, cs.primary,
-            'Import Files', 'Add existing PDFs or images to your library',
-            widget.onAddFiles)),
-        const Divider(indent: 16, endIndent: 16, height: 20),
-        _fade(2, _groupHeader(context, 'Edit')),
-        _fade(3, _toolTile(context, Icons.merge_type, Colors.orange.shade700,
-            'Merge PDFs', 'Combine multiple PDFs, choose pages per document', widget.onMerge)),
-        _fade(4, _toolTile(context, Icons.call_split, Colors.deepPurple.shade500,
-            'Split PDF', 'Extract pages or split into individual files', widget.onSplit)),
-        _fade(5, _toolTile(context, Icons.compress, Colors.red.shade600,
-            'Compress PDF', 'Reduce file size with adjustable quality', widget.onCompress)),
-        const Divider(indent: 16, endIndent: 16, height: 20),
-        _fade(6, _groupHeader(context, 'Convert')),
-        _fade(7, _toolTile(context, Icons.swap_horiz, Colors.teal.shade600,
-            'Format Converter', 'PDF → JPEG / PNG  ·  Images → PDF', widget.onFormat)),
-        _fade(7, _toolTile(context, Icons.text_snippet_outlined, Colors.indigo.shade600,
-            'Extract Text (OCR)', 'Read text from PDFs and images — fully offline', widget.onExtract)),
-        const Divider(indent: 16, endIndent: 16, height: 20),
-        const Divider(indent: 16, endIndent: 16, height: 20),
-        _fade(7, _groupHeader(context, 'Organise')),
-        _fade(8, _toolTile(context, Icons.view_module, Colors.pink.shade600,
-            'Page Manager', 'Reorder, delete, rotate pages', widget.onPageManager)),
-        _fade(8, _toolTile(context, Icons.water_drop_outlined, Colors.cyan.shade700,
-            'Watermark', 'Add a text watermark to all pages', widget.onWatermark)),
-        const Divider(indent: 16, endIndent: 16, height: 20),
-        _fade(9, _groupHeader(context, 'Security')),
-        _fade(9, _toolTile(context, Icons.lock_outline, Colors.blueGrey.shade600,
-            'Password Protect', 'Encrypt or unlock a PDF', widget.onProtect)),
-        _fade(9, _toolTile(context, Icons.edit_document, Colors.brown.shade500,
-            'Edit Metadata', 'Set title, author, and subject of a PDF', widget.onMetadata)),
-        const SizedBox(height: 16),
-      ],
-    );
-  }
-
-  Widget _groupHeader(BuildContext context, String text) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-        child: Text(text,
-            style: Theme.of(context)
-                .textTheme
-                .labelLarge
-                ?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-      );
-
-  Widget _toolTile(BuildContext context, IconData icon, Color color,
-      String title, String subtitle, VoidCallback? onTap) {
-    final enabled = onTap != null;
-    final tileColor = enabled ? color : Colors.grey;
-    return ListTile(
-      leading: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: tileColor.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(icon, color: tileColor, size: 20),
-      ),
-      title: Text(title,
-          style: TextStyle(
-              fontWeight: FontWeight.w600,
-              fontSize: 14,
-              color: enabled ? null : Colors.grey)),
-      subtitle: Text(subtitle,
-          style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-      trailing:
-          Icon(Icons.chevron_right, color: Colors.grey[400], size: 20),
-      onTap: onTap,
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    return ToolsListView(
+      entries: ToolsCatalog.filtered(homeTabOnly: true),
+      dividerHeight: 20,
+      actions: {
+        ToolId.scan: widget.onScan,
+        ToolId.convert: widget.onConvert,
+        ToolId.importFiles: widget.onAddFiles,
+        ToolId.merge: widget.onMerge,
+        ToolId.split: widget.onSplit,
+        ToolId.compress: widget.onCompress,
+        ToolId.formatConverter: widget.onFormat,
+        ToolId.extractText: widget.onExtract,
+        ToolId.pageManager: widget.onPageManager,
+        ToolId.watermark: widget.onWatermark,
+        ToolId.passwordProtect: widget.onProtect,
+        ToolId.editMetadata: widget.onMetadata,
+      },
+      wrapChild: (child, index) => _fade(index, child),
     );
   }
 }
 
 // ─── Document grid / list ─────────────────────────────────────────────────────
 
-class _DocumentGrid extends StatefulWidget {
+class _DocumentGrid extends ConsumerStatefulWidget {
   final Future<void> Function(String) onDocumentTap;
   final Future<void> Function(String) onDocumentDelete;
+  final Future<void> Function(List<String> paths) onImportDropped;
+  final VoidCallback onScan;
+  final VoidCallback onImport;
 
   const _DocumentGrid({
     required this.onDocumentTap,
     required this.onDocumentDelete,
+    required this.onImportDropped,
+    required this.onScan,
+    required this.onImport,
   });
 
   @override
-  State<_DocumentGrid> createState() => _DocumentGridState();
+  ConsumerState<_DocumentGrid> createState() => _DocumentGridState();
 }
 
-class _DocumentGridState extends State<_DocumentGrid> {
-  final _db = DocumentDatabase();
-  List<Map<String, dynamic>> _docs = [];
-  bool _loading = true;
+class _DocumentGridState extends ConsumerState<_DocumentGrid> {
   _SortMode _sortMode = _SortMode.recent;
   bool _isGridView = true;
   String _search = '';
@@ -535,34 +485,13 @@ class _DocumentGridState extends State<_DocumentGrid> {
   final _searchCtrl = TextEditingController();
 
   @override
-  void initState() {
-    super.initState();
-    _db.addListener(_reload);
-    _load();
-  }
-
-  @override
   void dispose() {
-    _db.removeListener(_reload);
     _searchCtrl.dispose();
     super.dispose();
   }
 
-  void _reload() => _load();
-
-  Future<void> _load() async {
-    final docs = await _db.getAllDocuments();
-    if (mounted) {
-      setState(() {
-        _docs = docs;
-        _loading = false;
-        _applySort();
-      });
-    }
-  }
-
-  List<Map<String, dynamic>> get _filtered {
-    var list = _docs.where((d) {
+  List<Map<String, dynamic>> _filtered(List<Map<String, dynamic>> docs) {
+    var list = docs.where((d) {
       final name = (d['name'] as String? ?? '').toLowerCase();
       final ext = name.split('.').last;
       // Search filter
@@ -598,12 +527,6 @@ class _DocumentGridState extends State<_DocumentGrid> {
     }
     return list;
   }
-
-  void _applySort() {
-    // Now handled by _filtered getter — just trigger rebuild
-  }
-
-  // ─── Rename ───────────────────────────────────────────────────────────────
 
   Future<void> _renameDoc(String path, String name) async {
     final ext =
@@ -648,7 +571,7 @@ class _DocumentGridState extends State<_DocumentGrid> {
       final file = File(path);
       final newPath = '${file.parent.path}/$newBaseName$ext';
       await file.rename(newPath);
-      await _db.updatePath(path, newPath);
+      await ref.read(documentDatabaseProvider).updatePath(path, newPath);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -664,11 +587,108 @@ class _DocumentGridState extends State<_DocumentGrid> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    final docsAsync = ref.watch(documentsProvider);
 
+    return docsAsync.when(
+      loading: () => _buildSkeletonLoading(context),
+      error: (e, _) => Center(child: Text('Could not load documents: $e')),
+      data: (docs) => DesktopDropZone(
+        onFilesDropped: widget.onImportDropped,
+        child: _buildDocumentList(context, docs),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonLoading(BuildContext context) {
+    final mockCount = _isGridView ? 6 : 8;
+    final mockDocs = _skeletonMockDocs(mockCount);
+
+    void noop() {}
+
+    return Skeletonizer(
+      enabled: true,
+      child: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              child: TextField(
+                enabled: false,
+                decoration: InputDecoration(
+                  hintText: 'Search documents…',
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  isDense: true,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 4, 0),
+              child: Row(
+                children: [
+                  _FilterChip(label: 'All', selected: true, onTap: noop),
+                  const SizedBox(width: 6),
+                  _FilterChip(label: 'PDF', selected: false, onTap: noop),
+                  const SizedBox(width: 6),
+                  _FilterChip(label: 'Image', selected: false, onTap: noop),
+                ],
+              ),
+            ),
+          ),
+          if (_isGridView)
+            SliverLayoutBuilder(
+              builder: (context, constraints) {
+                final cols = _gridCrossAxisCount(constraints.crossAxisExtent);
+                return SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
+                  sliver: SliverGrid(
+                    delegate: SliverChildBuilderDelegate(
+                      (_, i) => _DocCard(
+                        doc: mockDocs[i],
+                        onTap: noop,
+                        onDelete: noop,
+                        onRename: noop,
+                        onToggleFavourite: noop,
+                      ),
+                      childCount: mockDocs.length,
+                    ),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: cols,
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                      childAspectRatio: _gridChildAspectRatio(cols),
+                    ),
+                  ),
+                );
+              },
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.only(bottom: 96),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (_, i) => _DocListItem(
+                    doc: mockDocs[i],
+                    onTap: noop,
+                    onDelete: noop,
+                    onRename: noop,
+                  ),
+                  childCount: mockDocs.length,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDocumentList(
+      BuildContext context, List<Map<String, dynamic>> docs) {
     final cs = Theme.of(context).colorScheme;
-
-    final filtered = _filtered;
+    final filtered = _filtered(docs);
 
     return CustomScrollView(
       slivers: [
@@ -724,8 +744,7 @@ class _DocumentGridState extends State<_DocumentGrid> {
                   tooltip: 'Sort',
                   icon: Icon(Icons.sort, size: 20, color: cs.onSurfaceVariant),
                   initialValue: _sortMode,
-                  onSelected: (mode) =>
-                      setState(() { _sortMode = mode; _applySort(); }),
+                  onSelected: (mode) => setState(() => _sortMode = mode),
                   itemBuilder: (_) => [
                     _sortItem(_SortMode.recent, Icons.access_time,
                         'Recently opened'),
@@ -751,32 +770,44 @@ class _DocumentGridState extends State<_DocumentGrid> {
         ),
 
         if (filtered.isEmpty)
-          SliverFillRemaining(child: _buildEmpty(context))
-        else if (_isGridView)
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
-            sliver: SliverGrid(
-              delegate: SliverChildBuilderDelegate(
-                (_, i) => _DocCard(
-                  doc: filtered[i],
-                  onTap: () =>
-                      widget.onDocumentTap(filtered[i]['path'] ?? ''),
-                  onDelete: () =>
-                      widget.onDocumentDelete(filtered[i]['path'] ?? ''),
-                  onRename: () => _renameDoc(
-                      filtered[i]['path'] ?? '', filtered[i]['name'] ?? ''),
-                  onToggleFavourite: () =>
-                      _db.toggleFavourite(filtered[i]['path'] ?? ''),
-                ),
-                childCount: filtered.length,
-              ),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 10,
-                mainAxisSpacing: 10,
-                childAspectRatio: 0.72,
-              ),
+          SliverFillRemaining(
+            child: _buildEmpty(
+              context,
+              onScan: widget.onScan,
+              onImport: widget.onImport,
             ),
+          )
+        else if (_isGridView)
+          SliverLayoutBuilder(
+            builder: (context, constraints) {
+              final cols = _gridCrossAxisCount(constraints.crossAxisExtent);
+              return SliverPadding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
+                sliver: SliverGrid(
+                  delegate: SliverChildBuilderDelegate(
+                    (_, i) => _DocCard(
+                      doc: filtered[i],
+                      onTap: () =>
+                          widget.onDocumentTap(filtered[i]['path'] ?? ''),
+                      onDelete: () =>
+                          widget.onDocumentDelete(filtered[i]['path'] ?? ''),
+                      onRename: () => _renameDoc(
+                          filtered[i]['path'] ?? '', filtered[i]['name'] ?? ''),
+                      onToggleFavourite: () => ref
+                          .read(documentDatabaseProvider)
+                          .toggleFavourite(filtered[i]['path'] ?? ''),
+                    ),
+                    childCount: filtered.length,
+                  ),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: _gridChildAspectRatio(cols),
+                  ),
+                ),
+              );
+            },
           )
         else
           SliverPadding(
@@ -828,7 +859,11 @@ class _DocumentGridState extends State<_DocumentGrid> {
     );
   }
 
-  Widget _buildEmpty(BuildContext context) {
+  Widget _buildEmpty(
+    BuildContext context, {
+    required VoidCallback onScan,
+    required VoidCallback onImport,
+  }) {
     final cs = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
@@ -853,9 +888,35 @@ class _DocumentGridState extends State<_DocumentGrid> {
                     .titleMedium
                     ?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            Text('Tap the + button to scan, import,\nor convert images to PDF',
-                style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
-                textAlign: TextAlign.center),
+            Text(
+              'Scan a document or import files to get started',
+              style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: 260,
+              child: FilledButton.icon(
+                onPressed: onScan,
+                icon: const Icon(Icons.camera_alt_outlined, size: 20),
+                label: const Text('Scan Document'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: 260,
+              child: OutlinedButton.icon(
+                onPressed: onImport,
+                icon: const Icon(Icons.folder_open_outlined, size: 20),
+                label: const Text('Import Files'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -902,7 +963,8 @@ class _DocCard extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   Hero(
-                    tag: 'doc_thumb_${doc['path']}',
+                    tag: docThumbHeroTag(doc['path'] as String? ?? ''),
+                    flightShuttleBuilder: docThumbHeroFlightShuttle,
                     child: Container(
                       color: cs.surfaceContainerHighest,
                       child: _buildThumbImage(cs),
@@ -1092,7 +1154,7 @@ class _DocCard extends StatelessWidget {
               title: const Text('Share'),
               onTap: () {
                 Navigator.pop(context);
-                Share.shareXFiles(
+                ShareService.files(
                   [XFile(doc['path'] as String)],
                   subject: _name,
                 );
@@ -1282,7 +1344,7 @@ class _DocListItem extends StatelessWidget {
                 onTap();
                 break;
               case 'share':
-                Share.shareXFiles(
+                ShareService.files(
                   [XFile(doc['path'] as String)],
                   subject: _name,
                 );
@@ -1364,44 +1426,6 @@ class _FilterChip extends StatelessWidget {
                 : cs.onSurfaceVariant,
           ),
         ),
-      ),
-    );
-  }
-}
-
-// ─── Simple image viewer ──────────────────────────────────────────────────────
-
-class _ImageViewerScreen extends StatelessWidget {
-  final String path;
-  const _ImageViewerScreen({required this.path});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        title: Text(
-          path.split('/').last,
-          style: const TextStyle(fontSize: 14),
-          overflow: TextOverflow.ellipsis,
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share_outlined),
-            tooltip: 'Share',
-            onPressed: () => Share.shareXFiles(
-              [XFile(path)],
-              subject: path.split('/').last,
-            ),
-          ),
-        ],
-      ),
-      body: InteractiveViewer(
-        minScale: 0.5,
-        maxScale: 6.0,
-        child: Center(child: Image.file(File(path))),
       ),
     );
   }
@@ -1626,6 +1650,80 @@ class _DetailRow extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+// ─── Import progress pill ─────────────────────────────────────────────────────
+
+class _ImportProgressPill extends StatelessWidget {
+  final int done;
+  final int total;
+
+  const _ImportProgressPill({required this.done, required this.total});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final progress = total > 0 ? done / total : 0.0;
+
+    return Material(
+      elevation: 6,
+      shadowColor: Colors.black26,
+      borderRadius: BorderRadius.circular(28),
+      color: cs.surfaceContainerHigh,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                value: progress > 0 ? progress : null,
+                color: cs.primary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Importing files…',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: progress > 0 ? progress : null,
+                      minHeight: 3,
+                      backgroundColor: cs.surfaceContainerHighest,
+                      color: cs.primary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '$done / $total',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

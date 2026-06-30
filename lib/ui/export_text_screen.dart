@@ -2,7 +2,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:quick_pdf/services/share_service.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
 import 'package:quick_pdf/services/ocr_service.dart';
 
@@ -85,12 +86,12 @@ class _ExportTextScreenState extends State<ExportTextScreen> {
     if (text.isEmpty) { _snack('No text to export.'); return; }
     final dir = await getApplicationDocumentsDirectory();
     final stem = _file != null
-        ? _file!.path.split('/').last.replaceAll(RegExp(r'\.[^.]+$'), '')
+        ? fileStem(_file!.path)
         : 'extract';
     final out = File('${dir.path}/${stem}_text.txt');
     await out.writeAsString(text);
     if (mounted) {
-      await Share.shareXFiles([XFile(out.path)],
+      await ShareService.files([XFile(out.path)],
           subject: '${stem}_text.txt');
     }
   }
@@ -136,7 +137,7 @@ class _ExportTextScreenState extends State<ExportTextScreen> {
                 leading: Icon(Icons.picture_as_pdf, color: cs.error),
                 title: Text(
                   _file != null
-                      ? _file!.path.split('/').last
+                      ? fileName(_file!.path)
                       : 'Tap to pick a PDF or image',
                   style: TextStyle(
                     fontWeight:

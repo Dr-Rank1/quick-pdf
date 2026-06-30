@@ -3,10 +3,11 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
-import 'package:pdf_render/pdf_render.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:pdf_render_maintained/pdf_render.dart';
+import 'package:quick_pdf/services/share_service.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
+import 'package:quick_pdf/router/app_navigation.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
-import 'package:quick_pdf/ui/convert_screen.dart';
 
 // ─── Entry hub ───────────────────────────────────────────────────────────────
 
@@ -32,8 +33,7 @@ class FormatConverterScreen extends StatelessWidget {
                 allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'],
               );
               if (result == null || result.isEmpty || !context.mounted) return;
-              Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => ConvertScreen(initialImages: result)));
+              context.pushConvert(result);
             },
           ),
           const SizedBox(height: 20),
@@ -72,9 +72,7 @@ class FormatConverterScreen extends StatelessWidget {
     );
     if (result == null || result.isEmpty || !context.mounted) return;
 
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => _PdfExportScreen(file: result.first, format: format),
-    ));
+    await context.pushPdfExport(result.first, format);
   }
 }
 
@@ -127,17 +125,17 @@ class _ConvCard extends StatelessWidget {
 
 enum _ExportState { idle, exporting, done, error }
 
-class _PdfExportScreen extends StatefulWidget {
+class PdfExportScreen extends StatefulWidget {
   final File file;
   final String format; // 'jpeg' or 'png'
 
-  const _PdfExportScreen({required this.file, required this.format});
+  const PdfExportScreen({super.key, required this.file, required this.format});
 
   @override
-  State<_PdfExportScreen> createState() => _PdfExportScreenState();
+  State<PdfExportScreen> createState() => _PdfExportScreenState();
 }
 
-class _PdfExportScreenState extends State<_PdfExportScreen> {
+class _PdfExportScreenState extends State<PdfExportScreen> {
   int? _pageCount;
   int _quality = 85;
   _ExportState _state = _ExportState.idle;
@@ -174,7 +172,7 @@ class _PdfExportScreenState extends State<_PdfExportScreen> {
       final total = doc.pageCount;
       final dir = await getApplicationDocumentsDirectory();
       final base =
-          widget.file.path.split('/').last.replaceAll(RegExp(r'\.[^.]+$'), '');
+          fileStem(widget.file.path);
       final List<File> out = [];
 
       for (int i = 1; i <= total; i++) {
@@ -251,7 +249,7 @@ class _PdfExportScreenState extends State<_PdfExportScreen> {
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
-                  title: Text(widget.file.path.split('/').last,
+                  title: Text(fileName(widget.file.path),
                       overflow: TextOverflow.ellipsis),
                   subtitle: Text(_pageCount != null
                       ? '$_pageCount pages'
@@ -401,7 +399,7 @@ class _PdfExportScreenState extends State<_PdfExportScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () => Share.shareXFiles(
+              onPressed: () => ShareService.files(
                 _exported.map((f) => XFile(f.path)).toList(),
                 subject: 'Exported from QuickPDF',
               ),

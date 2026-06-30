@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:quick_pdf/router/app_navigation.dart';
 import 'package:quick_pdf/services/document_database.dart';
-import 'package:quick_pdf/ui/pdf_viewer_screen.dart';
 
 class DocumentSearchDelegate extends SearchDelegate<String?> {
   final DocumentDatabase _documentDatabase = DocumentDatabase();
@@ -109,11 +109,8 @@ class DocumentSearchDelegate extends SearchDelegate<String?> {
         ],
       ),
       onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => PDFViewerScreen(pdfPath: path),
-          ),
-        );
+        close(context, path);
+        context.openPdfViewer(path);
       },
     );
   }

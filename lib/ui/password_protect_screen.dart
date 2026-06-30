@@ -1,8 +1,10 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
+import 'package:quick_pdf/services/pdf_credential_store.dart';
 
 class PasswordProtectScreen extends StatefulWidget {
   const PasswordProtectScreen({super.key});
@@ -29,11 +31,19 @@ class _PasswordProtectScreenState extends State<PasswordProtectScreen>
   File? _unlockFile;
   final _unlockCtrl = TextEditingController();
   bool _obscureUnlock = true;
+  bool _biometricAvailable = false;
+  bool _hasStoredBiometric = false;
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
+    _initBiometrics();
+  }
+
+  Future<void> _initBiometrics() async {
+    final available = await PdfCredentialStore.instance.canUseBiometrics();
+    if (mounted) setState(() => _biometricAvailable = available);
   }
 
   @override
@@ -58,7 +68,59 @@ class _PasswordProtectScreenState extends State<PasswordProtectScreen>
     final files =
         await FilePickerService.pickMultipleFiles(allowedExtensions: ['pdf']);
     if (files == null || files.isEmpty) return;
-    setState(() => _unlockFile = files.first);
+    final file = files.first;
+    final hasStored =
+        await PdfCredentialStore.instance.hasStoredPassword(file.path);
+    setState(() {
+      _unlockFile = file;
+      _hasStoredBiometric = hasStored;
+    });
+    if (hasStored) {
+      await _unlockWithBiometrics();
+    }
+  }
+
+  Future<void> _unlockWithBiometrics() async {
+    final file = _unlockFile;
+    if (file == null || !_biometricAvailable) return;
+
+    final password = await PdfCredentialStore.instance.unlockWithBiometrics(
+      file.path,
+      reason: 'Unlock ${fileName(file.path)}',
+    );
+    if (password == null || !mounted) return;
+
+    _unlockCtrl.text = password;
+    await _removePassword(
+      passwordOverride: password,
+      offerBiometricSave: false,
+    );
+  }
+
+  Future<void> _offerBiometricSave(String pdfPath, String password) async {
+    if (!_biometricAvailable) return;
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save for biometric unlock?'),
+        content: const Text(
+          'Use fingerprint or face recognition to unlock this PDF next time.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (save == true) {
+      await PdfCredentialStore.instance.savePassword(pdfPath, password);
+    }
   }
 
   // ── Encrypt ──────────────────────────────────────────────────────────────
@@ -99,7 +161,7 @@ class _PasswordProtectScreenState extends State<PasswordProtectScreen>
       await DocumentDatabase().insertDocument(out.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
       if (mounted) {
-        _snack('PDF protected: ${out.path.split('/').last}');
+        _snack('PDF protected: ${fileName(out.path)}');
         _pwCtrl.clear();
         _confirmCtrl.clear();
         setState(() => _protectFile = null);
@@ -114,9 +176,12 @@ class _PasswordProtectScreenState extends State<PasswordProtectScreen>
 
   // ── Decrypt ──────────────────────────────────────────────────────────────
 
-  Future<void> _removePassword() async {
+  Future<void> _removePassword({
+    String? passwordOverride,
+    bool offerBiometricSave = true,
+  }) async {
     final file = _unlockFile;
-    final password = _unlockCtrl.text.trim();
+    final password = passwordOverride ?? _unlockCtrl.text.trim();
 
     if (file == null) {
       _snack('Select a password-protected PDF first.');
@@ -144,10 +209,16 @@ class _PasswordProtectScreenState extends State<PasswordProtectScreen>
       final thumbPath = await PDFManager.generateThumbnail(out.path);
       await DocumentDatabase().insertDocument(out.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
+      if (mounted && offerBiometricSave) {
+        await _offerBiometricSave(file.path, password);
+      }
       if (mounted) {
-        _snack('Password removed: ${out.path.split('/').last}');
+        _snack('Password removed: ${fileName(out.path)}');
         _unlockCtrl.clear();
-        setState(() => _unlockFile = null);
+        setState(() {
+          _unlockFile = null;
+          _hasStoredBiometric = false;
+        });
       }
     } catch (e) {
       PDFManager.hapticFeedbackError();
@@ -310,13 +381,24 @@ class _PasswordProtectScreenState extends State<PasswordProtectScreen>
             ),
           ),
         ),
+        if (_biometricAvailable && _unlockFile != null && _hasStoredBiometric) ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 48,
+            child: OutlinedButton.icon(
+              onPressed: _isProcessing ? null : _unlockWithBiometrics,
+              icon: const Icon(Icons.fingerprint),
+              label: const Text('Unlock with biometrics'),
+            ),
+          ),
+        ],
         const SizedBox(height: 24),
         SizedBox(
           height: 52,
           child: ElevatedButton.icon(
             onPressed:
                 (_unlockFile != null && _unlockCtrl.text.isNotEmpty)
-                    ? _removePassword
+                    ? () => _removePassword()
                     : null,
             icon: const Icon(Icons.lock_open),
             label: const Text('Remove Password', style: TextStyle(fontSize: 16)),
@@ -355,7 +437,7 @@ class _FileCard extends StatelessWidget {
         onTap: onPick,
         leading: Icon(Icons.picture_as_pdf, color: cs.error),
         title: Text(
-          file != null ? file!.path.split('/').last : hint,
+          file != null ? fileName(file!.path) : hint,
           style: TextStyle(
             fontWeight:
                 file != null ? FontWeight.w600 : FontWeight.normal,

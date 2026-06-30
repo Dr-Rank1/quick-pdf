@@ -5,9 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart' hide PdfDocument;
 import 'package:pdf/widgets.dart' as pw;
-import 'package:pdf_render/pdf_render.dart' as render;
+import 'package:pdf_render_maintained/pdf_render.dart' as render;
 import 'package:image/image.dart' as img;
 import 'package:quick_pdf/core/pdf_manager.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
@@ -225,7 +226,7 @@ class _SignPdfScreenState extends State<SignPdfScreen> {
           .insertDocument(out.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
       if (mounted) {
-        _snack('Signed: ${out.path.split('/').last}');
+        _snack('Signed: ${fileName(out.path)}');
         Navigator.of(context).pop();
       }
     } catch (e) {
@@ -380,7 +381,7 @@ class _SignPdfScreenState extends State<SignPdfScreen> {
             leading: Icon(Icons.picture_as_pdf, color: cs.error),
             title: Text(
               _pdfFile != null
-                  ? _pdfFile!.path.split('/').last
+                  ? fileName(_pdfFile!.path)
                   : 'Tap to pick a PDF',
               style: TextStyle(
                   fontWeight: FontWeight.w600,

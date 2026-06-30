@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/scanner_service.dart';
-import 'package:quick_pdf/ui/pdf_viewer_screen.dart';
+import 'package:quick_pdf/router/app_navigation.dart';
 
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
@@ -156,11 +156,7 @@ class _ScannerScreenState extends State<ScannerScreen>
       await DocumentDatabase().insertDocument(pdfFile.path, thumbnailPath: thumbPath);
 
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => PDFViewerScreen(pdfPath: pdfFile.path),
-          ),
-        );
+        context.replaceWithPdfViewer(pdfFile.path);
       }
     } catch (e) {
       if (mounted) {

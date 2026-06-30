@@ -2,9 +2,10 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:pdf_render/pdf_render.dart' as render;
+import 'package:pdf_render_maintained/pdf_render.dart' as render;
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/ad_service.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/services/document_database.dart';
 
 class PageManagerScreen extends StatefulWidget {
@@ -114,9 +115,11 @@ class _PageManagerScreenState extends State<PageManagerScreen> {
     try {
       // Build the page order using the current arrangement
       final pageOrder = _pages.map((p) => p.pageNumber).toList();
+      final rotations = _pages.map((p) => p.rotationDegrees).toList();
       final out = await PDFManager.reorderPages(
         widget.pdfFile,
         pageOrder: pageOrder,
+        rotations: rotations,
         onProgress: (c, t) {
           if (mounted) setState(() => _progress = c);
         },
@@ -127,7 +130,7 @@ class _PageManagerScreenState extends State<PageManagerScreen> {
       PDFManager.hapticFeedbackSuccess();
       await AdService().recordToolCompletion();
       if (mounted) {
-        _snack('Saved: ${out.path.split('/').last}');
+        _snack('Saved: ${fileName(out.path)}');
         Navigator.of(context).pop();
       }
     } catch (e) {
@@ -147,9 +150,11 @@ class _PageManagerScreenState extends State<PageManagerScreen> {
     setState(() { _isProcessing = true; _progress = 0; });
     try {
       final pageOrder = selected.map((p) => p.pageNumber).toList();
+      final rotations = selected.map((p) => p.rotationDegrees).toList();
       final out = await PDFManager.reorderPages(
         widget.pdfFile,
         pageOrder: pageOrder,
+        rotations: rotations,
         onProgress: (c, t) {
           if (mounted) setState(() => _progress = c);
         },
@@ -158,7 +163,7 @@ class _PageManagerScreenState extends State<PageManagerScreen> {
       await DocumentDatabase()
           .insertDocument(out.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
-      if (mounted) _snack('Extracted ${selected.length} pages to ${out.path.split('/').last}');
+      if (mounted) _snack('Extracted ${selected.length} pages to ${fileName(out.path)}');
     } catch (e) {
       PDFManager.hapticFeedbackError();
       if (mounted) _snack('Failed: $e');

@@ -41,7 +41,7 @@ dependencies:
   # PDF viewing
   pdfx: ^2.5.0
   # PDF rendering for thumbnails
-  pdf_render: ^1.4.0
+  pdf_render_maintained: ^1.6.1
   # File picking
   file_picker: ^8.0.0+1
   image_picker: ^1.1.2
@@ -58,7 +58,7 @@ dependencies:
   # Camera for document scanning
   camera: ^0.11.0
   # Sharing via native share intent
-  share_plus: ^9.0.0
+  share_plus: ^12.0.2
   # OCR for text recognition (offline)
   google_mlkit_text_recognition: ^0.13.0
   # State management
@@ -72,15 +72,24 @@ dependencies:
   # AdMob advertising
   google_mobile_ads: ^5.1.0
   # Markdown viewer for privacy policy
-  flutter_markdown: ^0.7.1
+  flutter_markdown_plus: ^1.0.7
   # App version info
   package_info_plus: ^8.0.0
+  go_router: ^17.3.0
+  in_app_purchase: ^3.3.0
+  desktop_drop: ^0.7.1
+  in_app_review: ^2.0.12
+  local_auth: ^3.0.1
+  flutter_secure_storage: ^10.3.1
+  skeletonizer: ^2.1.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  integration_test:
+    sdk: flutter
   mocktail: ^1.0.0
-  sqflite_common_ffi: ^2.3.0
+  sqflite_common_ffi: 2.4.0
   path_provider_platform_interface: ^2.1.0
   plugin_platform_interface: ^2.1.0
 

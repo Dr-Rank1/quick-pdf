@@ -1,26 +1,8 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
-import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:quick_pdf/services/document_database.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-// ---------------------------------------------------------------------------
-// Fake PathProvider for tests
-// ---------------------------------------------------------------------------
-class _FakePathProvider extends Fake
-    with MockPlatformInterfaceMixin
-    implements PathProviderPlatform {
-  late final Directory _tmp;
-  _FakePathProvider(this._tmp);
-
-  @override
-  Future<String?> getApplicationDocumentsPath() async => _tmp.path;
-  @override
-  Future<String?> getTemporaryPath() async => _tmp.path;
-  @override
-  Future<String?> getApplicationCachePath() async => _tmp.path;
-}
+import 'test_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,20 +19,15 @@ Future<File> _touchFile(Directory dir, String name) async {
 void main() {
   late Directory tmpDir;
 
-  setUpAll(() {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-  });
+  setUpAll(initTestDatabase);
 
   setUp(() async {
     tmpDir = await Directory.systemTemp.createTemp('qpdf_test_');
-    PathProviderPlatform.instance = _FakePathProvider(tmpDir);
-    // Reset the singleton DB so each test gets a fresh database.
-    // We use the internal reset method exposed for tests.
+    await useTempDatabase(tmpDir);
   });
 
   tearDown(() async {
-    await tmpDir.delete(recursive: true);
+    await disposeTempDatabase(tmpDir);
   });
 
   group('DocumentDatabase', () {
@@ -64,19 +41,24 @@ void main() {
       expect(doc!['name'], equals('test.pdf'));
     });
 
-    test('getAllDocuments returns valid files only', () async {
+    test('getAllDocuments returns rows immediately; background prunes orphans',
+        () async {
       final db = DocumentDatabase();
       final real = await _touchFile(tmpDir, 'real.pdf');
       await db.insertDocument(real.path);
 
-      // Insert a ghost path without creating the file
-      final ghost = File('${tmpDir.path}/ghost.pdf');
+      final ghost = await _touchFile(tmpDir, 'ghost.pdf');
       await db.insertDocument(ghost.path);
-      await ghost.delete().catchError((_) => ghost);
+      await ghost.delete();
 
       final docs = await db.getAllDocuments();
       expect(docs.map((d) => d['name']).toList(), contains('real.pdf'));
-      expect(docs.map((d) => d['name']).toList(),
+      expect(docs.map((d) => d['name']).toList(), contains('ghost.pdf'));
+
+      await db.awaitOrphanPrune();
+      final pruned = await db.getAllDocuments();
+      expect(pruned.map((d) => d['name']).toList(), contains('real.pdf'));
+      expect(pruned.map((d) => d['name']).toList(),
           isNot(contains('ghost.pdf')));
     });
 

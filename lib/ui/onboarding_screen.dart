@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:quick_pdf/ui/main_nav_page.dart';
+import 'package:quick_pdf/constants/preference_keys.dart';
+import 'package:quick_pdf/router/app_routes.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -22,11 +24,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Future<void> _finish() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('has_seen_onboarding', true);
+    await prefs.setBool(kPrefHasSeenOnboarding, true);
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const QuickPDFHomePage()),
-    );
+    context.go(AppRoutes.home);
   }
 
   @override

@@ -3,11 +3,13 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:pdf_render/pdf_render.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:pdf_render_maintained/pdf_render.dart';
+import 'package:quick_pdf/services/share_service.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
-import 'package:quick_pdf/ui/pdf_viewer_screen.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
+import 'package:quick_pdf/router/app_navigation.dart';
 
 enum _SplitMode { allPages, range }
 
@@ -93,6 +95,7 @@ class _SplitScreenState extends State<SplitScreen> {
       }
 
       PDFManager.hapticFeedbackSuccess();
+      await ToolSuccessService.onMajorOperationComplete();
       if (mounted) {
         setState(() {
           _state = _SplitState.done;
@@ -174,7 +177,7 @@ class _SplitScreenState extends State<SplitScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    widget.file.path.split('/').last,
+                    fileName(widget.file.path),
                     style: const TextStyle(
                         fontWeight: FontWeight.w600, fontSize: 14),
                     maxLines: 2,
@@ -412,12 +415,8 @@ class _SplitScreenState extends State<SplitScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () => Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        PDFViewerScreen(pdfPath: _results.first.path),
-                  ),
-                ),
+                onPressed: () =>
+                    context.replaceWithPdfViewer(_results.first.path),
                 icon: const Icon(Icons.open_in_new),
                 label: const Text('Open PDF'),
                 style: ElevatedButton.styleFrom(
@@ -430,7 +429,7 @@ class _SplitScreenState extends State<SplitScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () => Share.shareXFiles(
+              onPressed: () => ShareService.files(
                 _results.map((f) => XFile(f.path)).toList(),
                 subject: 'Split PDF from QuickPDF',
               ),

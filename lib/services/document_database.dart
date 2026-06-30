@@ -1,20 +1,72 @@
-import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
-class DocumentDatabase extends ChangeNotifier {
-  static final DocumentDatabase _instance = DocumentDatabase._internal();
-  factory DocumentDatabase() => _instance;
+class DocumentDatabase {
+  static DocumentDatabase? _instance;
+  factory DocumentDatabase() => _instance ??= DocumentDatabase._internal();
   DocumentDatabase._internal();
 
   static Database? _database;
+  Future<void>? _orphanPruneFuture;
+
+  /// Called after any mutation so Riverpod can refresh [documentsProvider].
+  VoidCallback? onDocumentsChanged;
+
+  void _notifyChanged() => onDocumentsChanged?.call();
+
+  /// Awaits any in-flight background orphan prune (for tests).
+  @visibleForTesting
+  Future<void> awaitOrphanPrune() async {
+    await _orphanPruneFuture;
+  }
+
+  void _scheduleOrphanPrune() {
+    _orphanPruneFuture =
+        (_orphanPruneFuture ?? Future.value()).then((_) => _pruneOrphans());
+  }
+
+  Future<void> _pruneOrphans() async {
+    final db = await database;
+    final all = await db.query('documents');
+    final orphaned = <String>[];
+
+    for (final doc in all) {
+      final path = doc['path'] as String?;
+      if (path == null) continue;
+      if (!await File(path).exists()) {
+        orphaned.add(path);
+      }
+    }
+
+    if (orphaned.isEmpty) return;
+
+    final batch = db.batch();
+    for (final path in orphaned) {
+      batch.delete('documents', where: 'path = ?', whereArgs: [path]);
+    }
+    await batch.commit(noResult: true);
+    _notifyChanged();
+  }
 
   Future<Database> get database async {
     if (_database != null) return _database!;
     _database = await _initDatabase();
     return _database!;
+  }
+
+  /// Closes the open database so widget/unit tests can start with a clean DB.
+  @visibleForTesting
+  static Future<void> resetForTesting() async {
+    await _instance?.awaitOrphanPrune();
+    await _database?.close();
+    _database = null;
+    _instance?._orphanPruneFuture = null;
+    _instance?.onDocumentsChanged = null;
+    _instance = null;
   }
 
   Future<Database> _initDatabase() async {
@@ -57,6 +109,53 @@ class DocumentDatabase extends ChangeNotifier {
     }
   }
 
+  /// Removes cached thumbnail PNGs that are orphaned or older than [maxAge].
+  Future<void> cleanupStaleThumbnails({
+    Duration maxAge = const Duration(days: 30),
+  }) async {
+    try {
+      final cacheDir = await getApplicationCacheDirectory();
+      final thumbDir = Directory('${cacheDir.path}/thumbnails');
+      if (!await thumbDir.exists()) return;
+
+      final db = await database;
+      final rows = await db.query('documents', columns: ['thumbnail_path', 'path']);
+      final referenced = <String>{};
+      for (final row in rows) {
+        final thumb = row['thumbnail_path'] as String?;
+        if (thumb != null && thumb.isNotEmpty) {
+          referenced.add(thumb);
+        }
+        final docPath = row['path'] as String?;
+        if (docPath != null) {
+          final key = docPath.hashCode.abs().toString();
+          referenced.add('${thumbDir.path}/thumb_$key.png');
+        }
+      }
+
+      final cutoff = DateTime.now().subtract(maxAge);
+      await for (final entity in thumbDir.list(followLinks: false)) {
+        if (entity is! File) continue;
+        if (!entity.path.toLowerCase().endsWith('.png')) continue;
+
+        final stat = await entity.stat();
+        final lastUsed = stat.accessed.isAfter(stat.modified)
+            ? stat.accessed
+            : stat.modified;
+        final isOrphan = !referenced.contains(entity.path);
+        final isStale = lastUsed.isBefore(cutoff);
+
+        if (isOrphan || isStale) {
+          try {
+            await entity.delete();
+          } catch (_) {}
+        }
+      }
+    } catch (_) {
+      // Never block startup on cache cleanup failures.
+    }
+  }
+
   Future<void> insertDocument(String path,
       {String? textContent, String? thumbnailPath}) async {
     final db = await database;
@@ -65,7 +164,7 @@ class DocumentDatabase extends ChangeNotifier {
       'documents',
       {
         'path': path,
-        'name': file.path.split('/').last,
+        'name': basename(file.path),
         'size': await file.length(),
         'text_content': textContent,
         'thumbnail_path': thumbnailPath,
@@ -75,38 +174,15 @@ class DocumentDatabase extends ChangeNotifier {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-    notifyListeners();
+    _notifyChanged();
   }
 
   Future<List<Map<String, dynamic>>> getAllDocuments() async {
     final db = await database;
-    // Favourites first, then lastOpened DESC
     final all = await db.query('documents',
         orderBy: 'is_favourite DESC, lastOpened DESC');
-
-    final List<Map<String, dynamic>> valid = [];
-    final List<String> orphaned = [];
-
-    for (final doc in all) {
-      final path = doc['path'] as String?;
-      if (path == null) continue;
-      if (await File(path).exists()) {
-        valid.add(doc);
-      } else {
-        orphaned.add(path);
-      }
-    }
-
-    if (orphaned.isNotEmpty) {
-      final batch = db.batch();
-      for (final path in orphaned) {
-        batch.delete('documents', where: 'path = ?', whereArgs: [path]);
-      }
-      await batch.commit(noResult: true);
-      notifyListeners();
-    }
-
-    return valid;
+    _scheduleOrphanPrune();
+    return all;
   }
 
   Future<void> toggleFavourite(String path) async {
@@ -120,13 +196,13 @@ class DocumentDatabase extends ChangeNotifier {
       where: 'path = ?',
       whereArgs: [path],
     );
-    notifyListeners();
+    _notifyChanged();
   }
 
   Future<void> clearThumbnailPaths() async {
     final db = await database;
     await db.update('documents', {'thumbnail_path': null});
-    notifyListeners();
+    _notifyChanged();
   }
 
   Future<Map<String, dynamic>?> getDocument(String path) async {
@@ -152,19 +228,10 @@ class DocumentDatabase extends ChangeNotifier {
       where: 'name LIKE ? OR text_content LIKE ?',
       whereArgs: [searchQuery, searchQuery],
       orderBy: 'is_favourite DESC, lastOpened DESC',
-      limit: limit * 2,
+      limit: limit,
     );
-
-    final valid = <Map<String, dynamic>>[];
-    for (final doc in results) {
-      final path = doc['path'] as String?;
-      if (path == null) continue;
-      if (await File(path).exists()) {
-        valid.add(doc);
-        if (valid.length >= limit) break;
-      }
-    }
-    return valid;
+    _scheduleOrphanPrune();
+    return results;
   }
 
   Future<void> updateLastOpened(String path) async {
@@ -175,7 +242,7 @@ class DocumentDatabase extends ChangeNotifier {
       where: 'path = ?',
       whereArgs: [path],
     );
-    notifyListeners();
+    _notifyChanged();
   }
 
   Future<void> updateTextContent(String path, String textContent) async {
@@ -186,7 +253,7 @@ class DocumentDatabase extends ChangeNotifier {
       where: 'path = ?',
       whereArgs: [path],
     );
-    notifyListeners();
+    _notifyChanged();
   }
 
   Future<void> updatePath(String oldPath, String newPath) async {
@@ -196,13 +263,13 @@ class DocumentDatabase extends ChangeNotifier {
       'documents',
       {
         'path': newPath,
-        'name': newPath.split('/').last,
+        'name': basename(newPath),
         'size': await newFile.length(),
       },
       where: 'path = ?',
       whereArgs: [oldPath],
     );
-    notifyListeners();
+    _notifyChanged();
   }
 
   Future<void> deleteDocument(String path) async {
@@ -212,6 +279,6 @@ class DocumentDatabase extends ChangeNotifier {
       where: 'path = ?',
       whereArgs: [path],
     );
-    notifyListeners();
+    _notifyChanged();
   }
 }

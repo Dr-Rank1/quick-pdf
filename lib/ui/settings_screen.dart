@@ -1,19 +1,18 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:quick_pdf/constants/preference_keys.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/providers/theme_provider.dart';
 import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/document_database.dart';
+import 'package:quick_pdf/services/premium_service.dart';
 
-// ── Shared prefs keys ─────────────────────────────────────────────────────────
-const String kPrefImageQuality = 'default_image_quality';
-const String kPrefOcrLanguage = 'ocr_language';
-const String kPrefAdsEnabled = 'ads_enabled';
-
+// ── Shared prefs keys (see lib/constants/preference_keys.dart) ───────────────
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -31,6 +30,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   int _defaultQuality = 75;
   String _ocrLanguage = 'en';
   bool _adsEnabled = true;
+  bool _premiumUnlocked = false;
+  bool _purchasePending = false;
+  String? _premiumPrice;
 
   static const List<Map<String, String>> _ocrLanguages = [
     {'label': 'English', 'code': 'en'},
@@ -47,6 +49,55 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _loadPrefs();
     _calcStorage();
     _loadVersion();
+    _loadPremium();
+  }
+
+  Future<void> _loadPremium() async {
+    final premium = PremiumService.instance;
+    if (mounted) {
+      setState(() {
+        _premiumUnlocked = AdService.premiumUnlocked;
+        _premiumPrice = premium.formattedPrice;
+        _purchasePending = premium.isPurchasePending;
+      });
+    }
+  }
+
+  Future<void> _purchaseRemoveAds() async {
+    setState(() => _purchasePending = true);
+    final started = await PremiumService.instance.purchaseRemoveAds();
+    if (!started && mounted) {
+      setState(() => _purchasePending = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Could not start purchase. Try again later.'),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (mounted) {
+      setState(() {
+        _premiumUnlocked = AdService.premiumUnlocked;
+        _purchasePending = PremiumService.instance.isPurchasePending;
+      });
+    }
+  }
+
+  Future<void> _restorePurchases() async {
+    setState(() => _purchasePending = true);
+    await PremiumService.instance.restorePurchases();
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (mounted) {
+      setState(() {
+        _premiumUnlocked = AdService.premiumUnlocked;
+        _purchasePending = PremiumService.instance.isPurchasePending;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(_premiumUnlocked
+            ? 'Premium restored — ads removed'
+            : 'No previous purchase found'),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
   }
 
   Future<void> _loadPrefs() async {
@@ -56,6 +107,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _defaultQuality = prefs.getInt(kPrefImageQuality) ?? 75;
         _ocrLanguage = prefs.getString(kPrefOcrLanguage) ?? 'en';
         _adsEnabled = prefs.getBool(kPrefAdsEnabled) ?? true;
+        _premiumUnlocked = prefs.getBool(kPrefPremiumUnlocked) ?? false;
       });
     }
   }
@@ -125,7 +177,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         await for (final e
             in cacheDir.list(recursive: false, followLinks: false)) {
           if (e is File) {
-            final n = e.path.split('/').last.toLowerCase();
+            final n = fileName(e.path).toLowerCase();
             if (n.endsWith('.tmp') || n.endsWith('.cache')) {
               freed += await e.length();
               await e.delete();
@@ -140,7 +192,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await for (final e
           in docDir.list(recursive: false, followLinks: false)) {
         if (e is File) {
-          final n = e.path.split('/').last.toLowerCase();
+          final n = fileName(e.path).toLowerCase();
           if (n.startsWith('thumb_') || n.endsWith('.tmp')) {
             freed += await e.length();
             await e.delete();
@@ -315,19 +367,65 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ]),
           const SizedBox(height: 12),
 
+          // ── Premium ──
+          _CardSection(title: 'Premium', children: [
+            if (_premiumUnlocked)
+              ListTile(
+                leading: Icon(Icons.verified, color: cs.primary),
+                title: const Text('Ads removed'),
+                subtitle: const Text('Thank you for supporting QuickPDF'),
+              )
+            else ...[
+              ListTile(
+                leading: Icon(Icons.workspace_premium_outlined,
+                    color: cs.secondary),
+                title: const Text('Remove Ads'),
+                subtitle: Text(
+                  _premiumPrice != null
+                      ? 'One-time purchase · $_premiumPrice'
+                      : 'One-time purchase · unlock ad-free experience',
+                ),
+                trailing: _purchasePending
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : FilledButton(
+                        onPressed: _purchaseRemoveAds,
+                        child: const Text('Buy'),
+                      ),
+              ),
+              const Divider(height: 1, indent: 16, endIndent: 16),
+              ListTile(
+                leading: Icon(Icons.restore, color: cs.primary),
+                title: const Text('Restore purchase'),
+                onTap: _purchasePending ? null : _restorePurchases,
+              ),
+            ],
+          ]),
+          const SizedBox(height: 12),
+
           // ── Ads ──
           _CardSection(title: 'Ads', children: [
-            SwitchListTile(
-              title: const Text('Show ads'),
-              subtitle: const Text('Disabling hides ads for testing'),
-              value: _adsEnabled,
-              onChanged: (v) async {
-                setState(() => _adsEnabled = v);
-                AdService.adsEnabled = v;
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setBool(kPrefAdsEnabled, v);
-              },
-            ),
+            if (_premiumUnlocked)
+              const ListTile(
+                title: Text('Show ads'),
+                subtitle: Text('Disabled while premium is active'),
+                trailing: Switch(value: false, onChanged: null),
+              )
+            else
+              SwitchListTile(
+                title: const Text('Show ads'),
+                subtitle: const Text('Disabling hides ads for testing'),
+                value: _adsEnabled,
+                onChanged: (v) async {
+                  setState(() => _adsEnabled = v);
+                  AdService.adsEnabled = v;
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setBool(kPrefAdsEnabled, v);
+                },
+              ),
           ]),
           const SizedBox(height: 12),
 

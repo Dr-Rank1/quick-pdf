@@ -3,11 +3,14 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:quick_pdf/utils/image_quality_prefs.dart';
+import 'package:quick_pdf/services/share_service.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
-import 'package:quick_pdf/ui/pdf_viewer_screen.dart';
-import 'package:pdf_render/pdf_render.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
+import 'package:quick_pdf/router/app_navigation.dart';
+import 'package:pdf_render_maintained/pdf_render.dart';
 
 // ─── Preset definition ───────────────────────────────────────────────────────
 
@@ -112,15 +115,30 @@ class _CompressScreenState extends State<CompressScreen> {
     _originalSize = widget.file.lengthSync();
     final ts = DateTime.now();
     _nameController.text =
-        '${_stem(widget.file)}_compressed_${ts.year}${_d(ts.month)}${_d(ts.day)}';
+        '${fileStem(widget.file.path)}_compressed_${ts.year}${_d(ts.month)}${_d(ts.day)}';
     _loadInfo();
+    _loadDefaultQuality();
   }
 
-  String _stem(File f) {
-    final name = f.path.split('/').last;
-    final dot = name.lastIndexOf('.');
-    return dot > 0 ? name.substring(0, dot) : name;
+  Future<void> _loadDefaultQuality() async {
+    final quality = await readDefaultImageQuality();
+    if (!mounted) return;
+    setState(() => _applyDefaultQuality(quality));
   }
+
+  void _applyDefaultQuality(int quality) {
+    for (var i = 0; i < _presets.length; i++) {
+      if ((quality - _presets[i].quality).abs() <= 3) {
+        _presetIndex = i;
+        _isCustom = false;
+        _customQuality = quality;
+        return;
+      }
+    }
+    _isCustom = true;
+    _customQuality = quality;
+  }
+
 
   String _d(int n) => n.toString().padLeft(2, '0');
 
@@ -170,6 +188,7 @@ class _CompressScreenState extends State<CompressScreen> {
       final thumbPath = await PDFManager.generateThumbnail(out.path);
       await DocumentDatabase().insertDocument(out.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
+      await ToolSuccessService.onMajorOperationComplete();
 
       if (mounted) {
         setState(() {
@@ -261,7 +280,7 @@ class _CompressScreenState extends State<CompressScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    widget.file.path.split('/').last,
+                    fileName(widget.file.path),
                     style: const TextStyle(
                         fontWeight: FontWeight.w600, fontSize: 14),
                     maxLines: 2,
@@ -310,13 +329,12 @@ class _CompressScreenState extends State<CompressScreen> {
                   fontSize: 13,
                   color: Colors.grey[700])),
         ),
-        SizedBox(
-          height: 116,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (int i = 0; i < _presets.length; i++)
-                _buildPresetCard(i),
+              for (int i = 0; i < _presets.length; i++) _buildPresetCard(i),
               _buildCustomCard(),
             ],
           ),
@@ -361,7 +379,7 @@ class _CompressScreenState extends State<CompressScreen> {
                     color: selected ? p.color : null)),
             Text(p.sublabel,
                 style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-            const Spacer(),
+            const SizedBox(height: 8),
             Text(
               '≈ ${_formatSize(est)}',
               style: TextStyle(
@@ -416,7 +434,7 @@ class _CompressScreenState extends State<CompressScreen> {
                         : null)),
             Text('Your settings',
                 style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-            const Spacer(),
+            const SizedBox(height: 8),
             Text(
               '≈ ${_formatSize(est)}',
               style: TextStyle(
@@ -618,12 +636,8 @@ class _CompressScreenState extends State<CompressScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () => Navigator.of(context).pushReplacement(
-                MaterialPageRoute(
-                  builder: (_) =>
-                      PDFViewerScreen(pdfPath: _resultFile!.path),
-                ),
-              ),
+              onPressed: () =>
+                  context.replaceWithPdfViewer(_resultFile!.path),
               icon: const Icon(Icons.open_in_new),
               label: const Text('Open PDF'),
               style: ElevatedButton.styleFrom(
@@ -635,9 +649,9 @@ class _CompressScreenState extends State<CompressScreen> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () => Share.shareXFiles(
+                  onPressed: () => ShareService.files(
                     [XFile(_resultFile!.path)],
-                    subject: _resultFile!.path.split('/').last,
+                    subject: fileName(_resultFile!.path),
                   ),
                   icon: const Icon(Icons.share),
                   label: const Text('Share'),

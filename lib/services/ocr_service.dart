@@ -3,7 +3,9 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:image/image.dart' as img;
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
-import 'package:pdf_render/pdf_render.dart';
+import 'package:pdf_render_maintained/pdf_render.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:quick_pdf/constants/preference_keys.dart';
 
 class OcrPageResult {
   final int page;
@@ -20,13 +22,51 @@ class OcrPageResult {
 }
 
 class OcrService {
-  final TextRecognizer _textRecognizer = TextRecognizer();
+  TextRecognizer? _textRecognizer;
+  String? _activeLanguage;
+
+  /// Maps Settings language codes to ML Kit script models.
+  /// en/fr/es/de/sw use Latin; ar has no dedicated model in this package version.
+  static TextRecognitionScript scriptForLanguageCode(String code) {
+    switch (code) {
+      case 'zh':
+        return TextRecognitionScript.chinese;
+      case 'ja':
+        return TextRecognitionScript.japanese;
+      case 'ko':
+        return TextRecognitionScript.korean;
+      case 'hi':
+        return TextRecognitionScript.devanagiri;
+      case 'en':
+      case 'fr':
+      case 'es':
+      case 'de':
+      case 'ar':
+      case 'sw':
+      default:
+        return TextRecognitionScript.latin;
+    }
+  }
+
+  Future<TextRecognizer> _recognizer() async {
+    final prefs = await SharedPreferences.getInstance();
+    final language = prefs.getString(kPrefOcrLanguage) ?? 'en';
+    if (_textRecognizer == null || _activeLanguage != language) {
+      await _textRecognizer?.close();
+      _textRecognizer = TextRecognizer(
+        script: scriptForLanguageCode(language),
+      );
+      _activeLanguage = language;
+    }
+    return _textRecognizer!;
+  }
 
   /// Extracts text from a single image file.
   Future<OcrPageResult> extractTextFromImage(File imageFile) async {
     try {
+      final recognizer = await _recognizer();
       final InputImage input = InputImage.fromFilePath(imageFile.path);
-      final RecognizedText recognized = await _textRecognizer.processImage(input);
+      final RecognizedText recognized = await recognizer.processImage(input);
       final String text = _structuredText(recognized);
       return OcrPageResult(page: 1, text: text);
     } catch (_) {
@@ -40,6 +80,7 @@ class OcrService {
     File pdfFile, {
     void Function(int current, int total)? onProgress,
   }) async {
+    final recognizer = await _recognizer();
     final pdfDoc = await PdfDocument.openFile(pdfFile.path);
     final int total = pdfDoc.pageCount;
     final List<OcrPageResult> results = [];
@@ -50,12 +91,10 @@ class OcrService {
         onProgress?.call(i, total);
 
         final page = await pdfDoc.getPage(i);
-        // Render at 1.5× the native size, capped to 1800px wide for OCR quality
         final int renderWidth =
             (page.width * 1.5).round().clamp(1200, 1800);
         final pageImage = await page.render(width: renderWidth);
 
-        // Convert raw RGBA → PNG for ML Kit
         final rawImg = img.Image.fromBytes(
           width: pageImage.width,
           height: pageImage.height,
@@ -70,13 +109,15 @@ class OcrService {
 
         final InputImage input = InputImage.fromFilePath(tmpFile.path);
         final RecognizedText recognized =
-            await _textRecognizer.processImage(input);
+            await recognizer.processImage(input);
         results.add(OcrPageResult(
           page: i,
           text: _structuredText(recognized),
         ));
 
-        try { await tmpFile.delete(); } catch (_) {}
+        try {
+          await tmpFile.delete();
+        } catch (_) {}
       }
     } finally {
       await pdfDoc.dispose();
@@ -100,7 +141,6 @@ class OcrService {
     return [];
   }
 
-  /// Rebuilds text from ML Kit blocks, preserving paragraph structure.
   String _structuredText(RecognizedText recognized) {
     if (recognized.blocks.isEmpty) return '';
     return recognized.blocks
@@ -109,6 +149,8 @@ class OcrService {
   }
 
   void dispose() {
-    _textRecognizer.close();
+    _textRecognizer?.close();
+    _textRecognizer = null;
+    _activeLanguage = null;
   }
 }

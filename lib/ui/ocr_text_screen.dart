@@ -5,7 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
 import 'package:quick_pdf/services/ocr_service.dart';
 import 'package:quick_pdf/services/document_database.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
+import 'package:quick_pdf/services/share_service.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:path_provider/path_provider.dart';
 
 class OcrTextScreen extends StatefulWidget {
@@ -123,6 +125,8 @@ class _OcrTextScreenState extends State<OcrTextScreen> {
           await db.insertDocument(file.path, textContent: allText);
         }
       }
+
+      await ToolSuccessService.onMajorOperationComplete();
     } catch (e, stack) {
       await ErrorLogger.log('ocr', e, stack);
       if (mounted) {
@@ -252,7 +256,7 @@ class _OcrTextScreenState extends State<OcrTextScreen> {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final base = _currentFile != null
-          ? _currentFile!.path.split('/').last.replaceAll(RegExp(r'\.[^.]+$'), '')
+          ? fileStem(_currentFile!.path)
           : 'extracted';
       final outFile =
           File('${dir.path}/${base}_extracted.txt');
@@ -260,10 +264,10 @@ class _OcrTextScreenState extends State<OcrTextScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Saved: ${outFile.path.split('/').last}'),
+            content: Text('Saved: ${fileName(outFile.path)}'),
             action: SnackBarAction(
               label: 'Share',
-              onPressed: () => Share.shareXFiles(
+              onPressed: () => ShareService.files(
                 [XFile(outFile.path)],
                 subject: '$base — extracted text',
               ),
@@ -283,7 +287,7 @@ class _OcrTextScreenState extends State<OcrTextScreen> {
   Future<void> _shareText() async {
     final all = _editedTexts.join('\n\n');
     if (all.isEmpty) return;
-    await Share.share(all, subject: 'Extracted text from QuickPDF');
+    await ShareService.text(all, subject: 'Extracted text from QuickPDF');
   }
 
   Future<void> _pickAnotherFile() async {
@@ -330,7 +334,7 @@ class _OcrTextScreenState extends State<OcrTextScreen> {
   PreferredSizeWidget _buildAppBar(bool hasText) {
     return AppBar(
       title: Text(
-        _currentFile?.path.split('/').last ?? 'Extract Text',
+        _currentFile != null ? fileName(_currentFile!.path) : 'Extract Text',
         style: const TextStyle(fontSize: 15),
         overflow: TextOverflow.ellipsis,
       ),

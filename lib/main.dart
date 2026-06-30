@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:quick_pdf/ui/main_nav_page.dart';
-import 'package:quick_pdf/ui/onboarding_screen.dart';
+import 'package:quick_pdf/constants/preference_keys.dart';
 import 'package:quick_pdf/providers/theme_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:quick_pdf/services/ad_service.dart';
+import 'package:quick_pdf/services/premium_service.dart';
+import 'package:quick_pdf/router/app_router.dart';
+import 'package:quick_pdf/services/document_database.dart';
+import 'package:go_router/go_router.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,40 +17,49 @@ Future<void> main() async {
   // Pre-load prefs before runApp so the correct screen shows on the
   // very first frame — no blank screen or spinner at launch.
   final prefs = await SharedPreferences.getInstance();
-  final hasSeenOnboarding = prefs.getBool('has_seen_onboarding') ?? false;
+  final hasSeenOnboarding =
+      prefs.getBool(kPrefHasSeenOnboarding) ?? false;
+
+  await AdService.loadPreferences();
+  await PremiumService.instance.initialize();
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
   ));
 
+  final router = createAppRouter(showOnboarding: !hasSeenOnboarding);
+
   runApp(ProviderScope(
-    child: QuickPDFApp(showOnboarding: !hasSeenOnboarding),
+    child: QuickPDFApp(router: router),
   ));
 
-  // Initialise AdMob after the first frame so it never delays the UI.
+  // Initialise AdMob and background maintenance after the first frame.
   WidgetsBinding.instance.addPostFrameCallback((_) {
-    MobileAds.instance
-        .initialize()
-        .then((_) => AdService().loadInterstitial());
+    DocumentDatabase().cleanupStaleThumbnails();
+    if (AdService.shouldShowAds) {
+      MobileAds.instance
+          .initialize()
+          .then((_) => AdService().loadInterstitial());
+    }
   });
 }
 
 class QuickPDFApp extends ConsumerWidget {
-  final bool showOnboarding;
-  const QuickPDFApp({super.key, required this.showOnboarding});
+  final GoRouter router;
+  const QuickPDFApp({super.key, required this.router});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeProvider);
     const seed = Color(0xFF1A237E); // deep navy primary
 
-    return MaterialApp(
+    return MaterialApp.router(
       title: 'QuickPDF',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(seed, Brightness.light),
       darkTheme: _buildTheme(seed, Brightness.dark),
       themeMode: themeMode,
-      home: showOnboarding ? const OnboardingScreen() : const QuickPDFHomePage(),
+      routerConfig: router,
     );
   }
 

@@ -5,8 +5,9 @@ import 'package:pdf/pdf.dart' hide PdfDocument;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:image/image.dart' as img;
 import 'package:flutter/services.dart';
-import 'package:pdf_render/pdf_render.dart';
+import 'package:pdf_render_maintained/pdf_render.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as sf;
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'pdf_processor.dart';
 
 class PDFManager {
@@ -43,8 +44,10 @@ class PDFManager {
     return pdfFile;
   }
 
-  /// Merges PDFs on the main isolate so pdf_render's platform channels work.
-  /// Accepts per-document page selections and reports progress via [onProgress].
+  /// Merges PDFs via Syncfusion templates so vector text and graphics stay
+  /// selectable. Accepts per-document page selections and reports progress
+  /// via [onProgress]. The [quality] parameter is retained for API
+  /// compatibility but is not used (merge is lossless).
   static Future<File> mergePDFFiles(
     List<File> pdfs, {
     List<List<int>?>? pageSelections,
@@ -52,78 +55,58 @@ class PDFManager {
     String? outputName,
     void Function(int current, int total)? onProgress,
   }) async {
-    final pw.Document target = pw.Document(compress: true);
-    final double renderScale =
-        quality >= 80 ? 2.0 : quality >= 60 ? 1.5 : 1.0;
-
-    // Count total pages up front for progress reporting.
     int totalPages = 0;
-    int donePages = 0;
     for (int d = 0; d < pdfs.length; d++) {
       final sel = pageSelections?[d];
       if (sel != null) {
         totalPages += sel.length;
       } else {
-        // Open just to read page count, then dispose immediately.
-        final tmp = await PdfDocument.openFile(pdfs[d].path);
-        totalPages += tmp.pageCount;
-        await tmp.dispose();
+        final bytes = await pdfs[d].readAsBytes();
+        final tmp = sf.PdfDocument(inputBytes: bytes.toList());
+        totalPages += tmp.pages.count;
+        tmp.dispose();
       }
     }
 
-    for (int docIdx = 0; docIdx < pdfs.length; docIdx++) {
-      final Uint8List pdfBytes = await pdfs[docIdx].readAsBytes();
-      final source = await PdfDocument.openData(pdfBytes);
-      final int total = source.pageCount;
-      final List<int>? sel = pageSelections?[docIdx];
+    final sf.PdfDocument merged = sf.PdfDocument();
+    int donePages = 0;
 
-      final List<int> pages = sel != null
-          ? (sel.where((p) => p >= 1 && p <= total).toList()..sort())
-          : List.generate(total, (i) => i + 1);
+    try {
+      for (int docIdx = 0; docIdx < pdfs.length; docIdx++) {
+        final bytes = await pdfs[docIdx].readAsBytes();
+        final source = sf.PdfDocument(inputBytes: bytes.toList());
+        final int total = source.pages.count;
+        final List<int>? sel = pageSelections?[docIdx];
 
-      for (final pageNum in pages) {
-        donePages++;
-        onProgress?.call(donePages, totalPages);
+        final List<int> pages = sel != null
+            ? (sel.where((p) => p >= 1 && p <= total).toList()..sort())
+            : List.generate(total, (i) => i + 1);
 
-        final page = await source.getPage(pageNum);
-        final int rw = (page.width * renderScale).round();
-        final int rh = (page.height * renderScale).round();
-        final pageImage = await page.render(width: rw, height: rh);
+        for (final pageNum in pages) {
+          donePages++;
+          onProgress?.call(donePages, totalPages);
 
-        // Yield so Flutter can process redraws between pages.
-        await Future.delayed(Duration.zero);
+          final srcPage = source.pages[pageNum - 1];
+          final template = srcPage.createTemplate();
+          final destPage = merged.pages.add();
+          destPage.graphics.drawPdfTemplate(template, ui.Offset.zero);
 
-        final image = img.Image.fromBytes(
-          width: pageImage.width,
-          height: pageImage.height,
-          bytes: pageImage.pixels.buffer,
-          format: img.Format.uint8,
-          numChannels: 4,
-          order: img.ChannelOrder.rgba,
-        );
-        final encoded =
-            Uint8List.fromList(img.encodeJpg(image, quality: quality));
-
-        // Page size in PDF points (page.width/height), NOT pixel dimensions.
-        target.addPage(pw.Page(
-          pageFormat: PdfPageFormat(page.width, page.height),
-          margin: pw.EdgeInsets.zero,
-          build: (_) => pw.Image(pw.MemoryImage(encoded)),
-        ));
-
-        await Future.delayed(Duration.zero);
+          await Future.delayed(Duration.zero);
+        }
+        source.dispose();
       }
-      await source.dispose();
-    }
 
-    final Uint8List mergedBytes = await target.save();
-    final Directory appDocDir = await getApplicationDocumentsDirectory();
-    final String filename = (outputName?.isNotEmpty == true)
-        ? '$outputName.pdf'
-        : 'Merged_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf';
-    final File mergedFile = File('${appDocDir.path}/$filename');
-    await mergedFile.writeAsBytes(mergedBytes);
-    return mergedFile;
+      final List<int> mergedBytes = merged.saveSync();
+      final Directory appDocDir = await getApplicationDocumentsDirectory();
+      final String filename = (outputName?.isNotEmpty == true)
+          ? '$outputName.pdf'
+          : 'Merged_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final File mergedFile = File('${appDocDir.path}/$filename');
+      await mergedFile.writeAsBytes(mergedBytes);
+      return mergedFile;
+    } finally {
+      merged.dispose();
+    }
   }
 
   /// Compresses a PDF on the main isolate so pdf_render's platform channels work.
@@ -187,64 +170,51 @@ class PDFManager {
     return compressedFile;
   }
 
-  /// Splits a PDF into individual pages (or a page range) and saves each
-  /// as a separate PDF. Registers each output in the document database.
+  /// Splits a PDF into individual pages (or a page range) via Syncfusion
+  /// templates so each output page preserves vector content.
   static Future<List<File>> splitPDF(
     File pdfFile, {
     List<int>? pages, // 1-indexed; null = every page
     String? outputNamePrefix,
     void Function(int current)? onProgress,
   }) async {
-    final Uint8List pdfBytes = await pdfFile.readAsBytes();
-    final source = await PdfDocument.openData(pdfBytes);
-    final int total = source.pageCount;
+    final bytes = await pdfFile.readAsBytes();
+    final source = sf.PdfDocument(inputBytes: bytes.toList());
+    final int total = source.pages.count;
     final List<int> targetPages =
         pages ?? List.generate(total, (i) => i + 1);
     final Directory appDocDir = await getApplicationDocumentsDirectory();
-    final stem = outputNamePrefix ??
-        pdfFile.path.split('/').last.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final stem = outputNamePrefix ?? fileStem(pdfFile.path);
     final List<File> results = [];
     final String padLen = total.toString();
 
-    for (int i = 0; i < targetPages.length; i++) {
-      final int pageNum = targetPages[i];
-      onProgress?.call(i + 1);
+    try {
+      for (int i = 0; i < targetPages.length; i++) {
+        final int pageNum = targetPages[i];
+        onProgress?.call(i + 1);
 
-      if (pageNum < 1 || pageNum > total) continue;
+        if (pageNum < 1 || pageNum > total) continue;
 
-      final pw.Document single = pw.Document(compress: true);
-      final page = await source.getPage(pageNum);
-      final int rw = (page.width * 2).round();
-      final int rh = (page.height * 2).round();
-      final pageImage = await page.render(width: rw, height: rh);
+        final srcPage = source.pages[pageNum - 1];
+        final template = srcPage.createTemplate();
+        final single = sf.PdfDocument();
+        try {
+          single.pages.add().graphics.drawPdfTemplate(template, ui.Offset.zero);
 
-      await Future.delayed(Duration.zero);
+          final padded = pageNum.toString().padLeft(padLen.length, '0');
+          final File outFile =
+              File('${appDocDir.path}/${stem}_p$padded.pdf');
+          await outFile.writeAsBytes(single.saveSync());
+          results.add(outFile);
+        } finally {
+          single.dispose();
+        }
 
-      final image = img.Image.fromBytes(
-        width: pageImage.width,
-        height: pageImage.height,
-        bytes: pageImage.pixels.buffer,
-        format: img.Format.uint8,
-        numChannels: 4,
-        order: img.ChannelOrder.rgba,
-      );
-      final encoded = Uint8List.fromList(img.encodeJpg(image, quality: 90));
-
-      single.addPage(pw.Page(
-        pageFormat: PdfPageFormat(page.width, page.height),
-        margin: pw.EdgeInsets.zero,
-        build: (_) => pw.Image(pw.MemoryImage(encoded)),
-      ));
-
-      final padded = pageNum.toString().padLeft(padLen.length, '0');
-      final File outFile =
-          File('${appDocDir.path}/${stem}_p$padded.pdf');
-      await outFile.writeAsBytes(await single.save());
-      results.add(outFile);
-
-      await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      }
+    } finally {
+      source.dispose();
     }
-    await source.dispose();
     return results;
   }
 
@@ -428,10 +398,12 @@ class PDFManager {
 
   /// Reorders / selects pages from a PDF. [pageOrder] is a 1-indexed list
   /// of page numbers in the desired output order (may include duplicates or
-  /// omit pages to delete them).
+  /// omit pages to delete them). [rotations] provides clockwise rotation in
+  /// degrees (0, 90, 180, 270) for each output page.
   static Future<File> reorderPages(
     File pdfFile, {
     required List<int> pageOrder,
+    List<int>? rotations,
     void Function(int current, int total)? onProgress,
   }) async {
     final Uint8List pdfBytes = await pdfFile.readAsBytes();
@@ -459,10 +431,23 @@ class PDFManager {
         numChannels: 4,
         order: img.ChannelOrder.rgba,
       );
-      final encoded = Uint8List.fromList(img.encodeJpg(image, quality: 90));
+
+      final rotation = (rotations != null && i < rotations.length)
+          ? rotations[i] % 360
+          : 0;
+      final img.Image outputImage = rotation == 0
+          ? image
+          : img.copyRotate(image, angle: rotation.toDouble());
+
+      final encoded =
+          Uint8List.fromList(img.encodeJpg(outputImage, quality: 90));
+      final pageWidth =
+          rotation % 180 == 0 ? page.width : page.height;
+      final pageHeight =
+          rotation % 180 == 0 ? page.height : page.width;
 
       target.addPage(pw.Page(
-        pageFormat: PdfPageFormat(page.width, page.height),
+        pageFormat: PdfPageFormat(pageWidth, pageHeight),
         margin: pw.EdgeInsets.zero,
         build: (_) => pw.Image(pw.MemoryImage(encoded)),
       ));

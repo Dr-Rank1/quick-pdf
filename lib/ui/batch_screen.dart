@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/ad_service.dart';
@@ -14,7 +15,7 @@ class _BatchItem {
   _ItemStatus status = _ItemStatus.pending;
   String? error;
   _BatchItem(this.file);
-  String get name => file.path.split('/').last;
+  String get name => fileName(file.path);
 }
 
 class BatchScreen extends StatefulWidget {

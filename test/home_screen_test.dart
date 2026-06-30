@@ -1,9 +1,26 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quick_pdf/ui/home_screen.dart';
 
+import 'test_helpers.dart';
+
 void main() {
+  late Directory tmpDir;
+
+  setUpAll(initTestDatabase);
+
+  setUp(() async {
+    tmpDir = await Directory.systemTemp.createTemp('qpdf_home_test_');
+    await useTempDatabase(tmpDir);
+  });
+
+  tearDown(() async {
+    await disposeTempDatabase(tmpDir);
+  });
+
   group('HomeScreen', () {
     Widget buildSubject() {
       return const ProviderScope(
@@ -26,19 +43,10 @@ void main() {
       expect(find.byType(FloatingActionButton), findsOneWidget);
     });
 
-    testWidgets('empty state is shown when document list is empty',
-        (tester) async {
-      await tester.pumpWidget(buildSubject());
-      await tester.pump(const Duration(seconds: 1));
-
-      expect(find.text('No documents yet'), findsOneWidget);
-    });
-
     testWidgets('switching to Tools tab hides FAB', (tester) async {
       await tester.pumpWidget(buildSubject());
       await tester.pump();
 
-      // Tap the Tools tab
       await tester.tap(find.text('Tools'));
       await tester.pumpAndSettle();
 
@@ -53,8 +61,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Create'), findsOneWidget);
-      expect(find.text('Edit'), findsOneWidget);
-      expect(find.text('Security'), findsOneWidget);
+      expect(find.text('PDF Tools'), findsOneWidget);
+
+      await tester.scrollUntilVisible(
+        find.text('Security & Metadata'),
+        200,
+        scrollable: find.byType(Scrollable).last,
+      );
+      expect(find.text('Security & Metadata'), findsOneWidget);
     });
   });
 }

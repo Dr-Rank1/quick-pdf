@@ -1,10 +1,12 @@
 import 'package:quick_pdf/services/error_logger.dart';
+import 'package:quick_pdf/utils/image_quality_prefs.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
-import 'package:quick_pdf/ui/pdf_viewer_screen.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
+import 'package:quick_pdf/router/app_navigation.dart';
 
 class ConvertScreen extends StatefulWidget {
   final List<File> initialImages;
@@ -34,6 +36,12 @@ class _ConvertScreenState extends State<ConvertScreen> {
     final ts = DateTime.now();
     _nameController.text =
         'Document_${ts.year}${_d(ts.month)}${_d(ts.day)}_${_d(ts.hour)}${_d(ts.minute)}';
+    _loadDefaultQuality();
+  }
+
+  Future<void> _loadDefaultQuality() async {
+    final quality = await readDefaultImageQuality();
+    if (mounted) setState(() => _quality = quality);
   }
 
   String _d(int n) => n.toString().padLeft(2, '0');
@@ -88,11 +96,7 @@ class _ConvertScreenState extends State<ConvertScreen> {
       PDFManager.hapticFeedbackSuccess();
 
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => PDFViewerScreen(pdfPath: pdf.path),
-          ),
-        );
+        context.replaceWithPdfViewer(pdf.path);
       }
     } catch (e, stack) {
       await ErrorLogger.log('convert', e, stack);
@@ -434,7 +438,7 @@ class _ConvertScreenState extends State<ConvertScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    file.path.split('/').last,
+                    fileName(file.path),
                     style: const TextStyle(
                       fontWeight: FontWeight.w500,
                       fontSize: 13,

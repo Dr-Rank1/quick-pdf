@@ -1,13 +1,15 @@
 import 'package:quick_pdf/services/error_logger.dart';
 import 'dart:io';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
-import 'package:quick_pdf/ui/pdf_viewer_screen.dart';
-import 'package:pdf_render/pdf_render.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
+import 'package:quick_pdf/router/app_navigation.dart';
+import 'package:pdf_render_maintained/pdf_render.dart';
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
@@ -19,7 +21,7 @@ class MergeItem {
 
   MergeItem({required this.file});
 
-  String get name => file.path.split('/').last;
+  String get name => fileName(file.path);
 
   int get includedPageCount =>
       selectedPages?.length ?? (pageCount ?? 0);
@@ -64,7 +66,6 @@ class MergeScreen extends StatefulWidget {
 
 class _MergeScreenState extends State<MergeScreen> {
   final List<MergeItem> _items = [];
-  int _quality = 85; // 90 high / 72 medium / 50 low
   bool _isMerging = false;
   int _mergeProgressPage = 0;
   int _mergeProgressTotal = 0;
@@ -197,7 +198,6 @@ class _MergeScreenState extends State<MergeScreen> {
       final File merged = await PDFManager.mergePDFFiles(
         active.map((i) => i.file).toList(),
         pageSelections: pageSelections,
-        quality: _quality,
         outputName: _nameController.text.trim(),
         onProgress: (cur, tot) {
           if (mounted) setState(() { _mergeProgressPage = cur; _mergeProgressTotal = tot; });
@@ -207,13 +207,10 @@ class _MergeScreenState extends State<MergeScreen> {
       final thumbPath = await PDFManager.generateThumbnail(merged.path);
       await DocumentDatabase().insertDocument(merged.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
+      await ToolSuccessService.onMajorOperationComplete();
 
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => PDFViewerScreen(pdfPath: merged.path),
-          ),
-        );
+        context.replaceWithPdfViewer(merged.path);
       }
     } catch (e, stack) {
       await ErrorLogger.log('merge', e, stack);
@@ -291,7 +288,7 @@ class _MergeScreenState extends State<MergeScreen> {
     return Column(
       children: [
         _buildNameField(),
-        _buildQualityBar(),
+        _buildLosslessNote(),
         Expanded(
           child: ReorderableListView.builder(
             buildDefaultDragHandles: false,
@@ -326,26 +323,17 @@ class _MergeScreenState extends State<MergeScreen> {
     );
   }
 
-  Widget _buildQualityBar() {
+  Widget _buildLosslessNote() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       child: Row(
         children: [
-          Text('Quality:', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
-          const SizedBox(width: 12),
+          Icon(Icons.text_fields, size: 18, color: Colors.grey[600]),
+          const SizedBox(width: 8),
           Expanded(
-            child: SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(value: 90, label: Text('High')),
-                ButtonSegment(value: 72, label: Text('Medium')),
-                ButtonSegment(value: 50, label: Text('Low')),
-              ],
-              selected: {_quality},
-              onSelectionChanged: (v) => setState(() => _quality = v.first),
-              style: const ButtonStyle(
-                visualDensity: VisualDensity.compact,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
+            child: Text(
+              'Lossless merge — text stays selectable',
+              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
             ),
           ),
         ],
@@ -630,7 +618,7 @@ class _PagePickerSheetState extends State<_PagePickerSheet> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        widget.file.path.split('/').last,
+                        fileName(widget.file.path),
                         style: const TextStyle(
                             fontWeight: FontWeight.w600, fontSize: 14),
                         overflow: TextOverflow.ellipsis,

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
 
@@ -45,7 +46,7 @@ class _EditMetadataScreenState extends State<EditMetadataScreen> {
                   child: ListTile(
                     leading: Icon(Icons.picture_as_pdf, color: cs.error),
                     title: Text(
-                      widget.pdfFile.path.split('/').last,
+                      fileName(widget.pdfFile.path),
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
