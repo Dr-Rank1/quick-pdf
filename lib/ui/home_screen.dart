@@ -13,6 +13,8 @@ import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/document_import_service.dart';
 import 'package:quick_pdf/ui/widgets/desktop_drop_zone.dart';
 import 'package:quick_pdf/ui/widgets/doc_thumb_hero.dart';
+import 'package:quick_pdf/theme/app_colors.dart';
+import 'package:quick_pdf/theme/app_theme.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
 String _fmtSize(int bytes) {
@@ -285,23 +287,57 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final muted = AppColors.muted(brightness);
+    final border = AppColors.border(brightness);
+
     return Scaffold(
+      backgroundColor: AppColors.bg(brightness),
       appBar: AppBar(
-        title: const Text('QuickPDF'),
-        bottom: TabBar(
-          controller: _tabs,
-          tabs: const [
-            Tab(icon: Icon(Icons.access_time_outlined), text: 'Recent'),
-            Tab(icon: Icon(Icons.build_outlined), text: 'Tools'),
-          ],
-        ),
+        title: const QuickPdfWordmark(),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.search),
-            onPressed: () => showSearch(
-                context: context, delegate: DocumentSearchDelegate()),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: IconButton(
+              style: IconButton.styleFrom(
+                backgroundColor: AppColors.surface2(brightness),
+                side: BorderSide(color: border),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: Icon(Icons.search, color: muted, size: 20),
+              onPressed: () => showSearch(
+                  context: context, delegate: DocumentSearchDelegate()),
+            ),
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(52),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Row(
+                  children: [
+                    _HomeTabPill(
+                      label: 'Recent',
+                      selected: _tabs.index == 0,
+                      onTap: () => _tabs.animateTo(0),
+                    ),
+                    const SizedBox(width: 4),
+                    _HomeTabPill(
+                      label: 'Tools',
+                      selected: _tabs.index == 1,
+                      onTap: () => _tabs.animateTo(1),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: border),
+            ],
+          ),
+        ),
       ),
       body: Stack(
         children: [
@@ -352,9 +388,47 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ? FloatingActionButton(
               onPressed: _showQuickAddSheet,
               tooltip: 'Add document',
+              backgroundColor: AppColors.amber,
+              foregroundColor: Colors.black,
               child: const Icon(Icons.add),
             )
           : null,
+    );
+  }
+}
+
+class _HomeTabPill extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _HomeTabPill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = AppColors.muted(Theme.of(context).brightness);
+    return Material(
+      color: selected ? AppColors.navy : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: selected ? Colors.white : muted,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -901,6 +975,8 @@ class _DocumentGridState extends ConsumerState<_DocumentGrid> {
                 icon: const Icon(Icons.camera_alt_outlined, size: 20),
                 label: const Text('Scan Document'),
                 style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.amber,
+                  foregroundColor: Colors.black,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
               ),
@@ -1404,26 +1480,29 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final brightness = Theme.of(context).brightness;
+    final muted = AppColors.muted(brightness);
+    final border = AppColors.border(brightness);
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         decoration: BoxDecoration(
-          color: selected ? cs.primaryContainer : cs.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(16),
+          color: selected
+              ? AppColors.amber.withValues(alpha: 0.18)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? AppColors.amber : border,
+          ),
         ),
         child: Text(
           label,
           style: TextStyle(
             fontSize: 12,
-            fontWeight:
-                selected ? FontWeight.w700 : FontWeight.normal,
-            color: selected
-                ? cs.onPrimaryContainer
-                : cs.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+            color: selected ? AppColors.amber : muted,
           ),
         ),
       ),

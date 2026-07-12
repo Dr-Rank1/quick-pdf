@@ -211,13 +211,17 @@ class ToolGroupHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 8),
       child: Text(
-        title,
-        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+        title.toUpperCase(),
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.8,
+          color: muted,
+        ),
       ),
     );
   }
@@ -243,32 +247,64 @@ class ToolListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onTap != null;
-    final tileColor = enabled ? color : Colors.grey;
-    return ListTile(
-      leading: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: tileColor.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(10),
+    final cs = Theme.of(context).colorScheme;
+    final tileColor = enabled ? color : cs.onSurfaceVariant;
+    final border = cs.outline;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: cs.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: border),
         ),
-        child: Icon(icon, color: tileColor, size: 20),
-      ),
-      title: Text(
-        title,
-        style: TextStyle(
-          fontWeight: FontWeight.w600,
-          fontSize: 14,
-          color: enabled ? null : Colors.grey,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: tileColor.withValues(alpha: 0.13),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: tileColor, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: enabled ? cs.onSurface : cs.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: cs.onSurfaceVariant, size: 16),
+              ],
+            ),
+          ),
         ),
       ),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-      ),
-      trailing: Icon(Icons.chevron_right, color: Colors.grey[400], size: 20),
-      onTap: onTap,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
     );
   }
 }
@@ -309,7 +345,7 @@ class ToolsListView extends StatelessWidget {
     for (var gi = 0; gi < groups.length; gi++) {
       final group = groups[gi];
       if (gi > 0) {
-        children.add(Divider(indent: 16, endIndent: 16, height: dividerHeight));
+        children.add(SizedBox(height: dividerHeight * 0.4));
       }
       children.add(wrap(ToolGroupHeader(title: group)));
 
@@ -332,8 +368,9 @@ class ToolsListView extends StatelessWidget {
 
     children.add(const SizedBox(height: 16));
     return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       children: children,
     );
   }
 }
+

@@ -12,13 +12,10 @@ void main() {
       ad = AdService();
       ad.interstitialShowCount = 0;
       ad.forceInterstitialReady = true;
-      AdService.adsEnabled = true;
-      AdService.premiumUnlocked = false;
     });
 
-    tearDown(() {
-      AdService.adsEnabled = true;
-      AdService.premiumUnlocked = false;
+    test('shouldShowAds is always true', () {
+      expect(AdService.shouldShowAds, isTrue);
     });
 
     test('shouldShowInterstitial is true every 3rd completion', () {
@@ -43,31 +40,6 @@ void main() {
       await ad.recordToolCompletion();
       expect(ad.interstitialShowCount, 1);
       expect(await ad.completionCount(), 3);
-    });
-
-    test('recordToolCompletion does nothing when ads are disabled', () async {
-      SharedPreferences.setMockInitialValues({});
-      AdService.adsEnabled = false;
-
-      for (var i = 0; i < 3; i++) {
-        await ad.recordToolCompletion();
-      }
-
-      expect(ad.interstitialShowCount, 0);
-      expect(await ad.completionCount(), 0);
-    });
-
-    test('recordToolCompletion does nothing when premium is unlocked', () async {
-      SharedPreferences.setMockInitialValues({});
-      AdService.adsEnabled = true;
-      AdService.premiumUnlocked = true;
-
-      for (var i = 0; i < 3; i++) {
-        await ad.recordToolCompletion();
-      }
-
-      expect(ad.interstitialShowCount, 0);
-      expect(await ad.completionCount(), 0);
     });
   });
 }

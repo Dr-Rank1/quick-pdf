@@ -7,7 +7,7 @@ final themeProvider = StateNotifierProvider<ThemeNotifier, ThemeMode>((ref) {
 });
 
 class ThemeNotifier extends StateNotifier<ThemeMode> {
-  ThemeNotifier() : super(ThemeMode.system) {
+  ThemeNotifier() : super(ThemeMode.dark) {
     _loadTheme();
   }
 
@@ -18,8 +18,10 @@ class ThemeNotifier extends StateNotifier<ThemeMode> {
       state = ThemeMode.light;
     } else if (modeString == 'dark') {
       state = ThemeMode.dark;
+    } else if (modeString == 'system') {
+      state = ThemeMode.system;
     } else {
-      state = ThemeMode.system; // default to system
+      state = ThemeMode.dark; // design reference is dark-first
     }
   }
 

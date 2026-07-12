@@ -49,3 +49,11 @@ app.*.map.json
 android/key.properties
 android/app/*.jks
 android/app/*.keystore
+
+# Design extract scratch (keep only design_reference/canonical)
+design_reference/_extract/
+design_reference/_extract_new/
+design_reference/**/node_modules/
+
+# Built bundles (keep graphics in store_assets/, not AABs)
+store_assets/*.aab

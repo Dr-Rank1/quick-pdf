@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-import 'package:quick_pdf/constants/preference_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:startapp_sdk/startapp.dart';
 
@@ -40,32 +39,33 @@ class AdService {
 
   StartAppInterstitialAd? _interstitialAd;
   bool _isInterstitialReady = false;
-  bool _sdkConfigured = false;
+  Future<void>? _configureFuture;
 
   bool get isInterstitialReady => _isInterstitialReady;
 
-  // ── Ads enabled flag (for testing / user preference) ──────────────────────
-
-  static bool adsEnabled = true;
-
-  /// Set when the user purchases or restores the Remove Ads IAP.
-  static bool premiumUnlocked = false;
+  // ── Ads are always on (no opt-out / premium remove-ads) ───────────────────
 
   /// Whether any ad format should be requested or shown.
-  static bool get shouldShowAds => adsEnabled && !premiumUnlocked;
+  static bool get shouldShowAds => true;
 
   static Future<void> loadPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    premiumUnlocked = prefs.getBool(kPrefPremiumUnlocked) ?? false;
-    adsEnabled = prefs.getBool(kPrefAdsEnabled) ?? true;
+    // Reserved for future ad-related prefs; ads remain enabled permanently.
   }
 
   /// Configures Start.io once (test mode in debug builds).
+  /// Concurrent callers await the same future so banners never load before
+  /// `setTestAdsEnabled` finishes.
   Future<void> configureSdk() async {
-    if (_sdkConfigured || !shouldShowAds) return;
-    _sdkConfigured = true;
+    if (!shouldShowAds) return;
+    _configureFuture ??= _doConfigure();
+    await _configureFuture;
+  }
+
+  Future<void> _doConfigure() async {
     // Test ads only while developing — disabled in release builds.
     await _sdk.setTestAdsEnabled(kDebugMode);
+    debugPrint(
+        'AdService: Start.io configured (testAds=$kDebugMode, appId=$startIoAppId)');
   }
 
   StartAppSdk get sdk => _sdk;

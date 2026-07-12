@@ -8,11 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:quick_pdf/constants/preference_keys.dart';
 import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/providers/theme_provider.dart';
-import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/document_database.dart';
-import 'package:quick_pdf/services/premium_service.dart';
+import 'package:quick_pdf/theme/app_colors.dart';
 
-// ── Shared prefs keys (see lib/constants/preference_keys.dart) ───────────────
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -21,18 +19,11 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  String _storageUsed = '…';
   String _cacheUsed = '…';
   bool _clearingCache = false;
   String _appVersion = '…';
-
-  // User preferences
   int _defaultQuality = 75;
   String _ocrLanguage = 'en';
-  bool _adsEnabled = true;
-  bool _premiumUnlocked = false;
-  bool _purchasePending = false;
-  String? _premiumPrice;
 
   static const List<Map<String, String>> _ocrLanguages = [
     {'label': 'English', 'code': 'en'},
@@ -47,57 +38,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void initState() {
     super.initState();
     _loadPrefs();
-    _calcStorage();
+    _calcCache();
     _loadVersion();
-    _loadPremium();
-  }
-
-  Future<void> _loadPremium() async {
-    final premium = PremiumService.instance;
-    if (mounted) {
-      setState(() {
-        _premiumUnlocked = AdService.premiumUnlocked;
-        _premiumPrice = premium.formattedPrice;
-        _purchasePending = premium.isPurchasePending;
-      });
-    }
-  }
-
-  Future<void> _purchaseRemoveAds() async {
-    setState(() => _purchasePending = true);
-    final started = await PremiumService.instance.purchaseRemoveAds();
-    if (!started && mounted) {
-      setState(() => _purchasePending = false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Could not start purchase. Try again later.'),
-        behavior: SnackBarBehavior.floating,
-      ));
-    }
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (mounted) {
-      setState(() {
-        _premiumUnlocked = AdService.premiumUnlocked;
-        _purchasePending = PremiumService.instance.isPurchasePending;
-      });
-    }
-  }
-
-  Future<void> _restorePurchases() async {
-    setState(() => _purchasePending = true);
-    await PremiumService.instance.restorePurchases();
-    await Future.delayed(const Duration(milliseconds: 800));
-    if (mounted) {
-      setState(() {
-        _premiumUnlocked = AdService.premiumUnlocked;
-        _purchasePending = PremiumService.instance.isPurchasePending;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(_premiumUnlocked
-            ? 'Premium restored — ads removed'
-            : 'No previous purchase found'),
-        behavior: SnackBarBehavior.floating,
-      ));
-    }
   }
 
   Future<void> _loadPrefs() async {
@@ -106,8 +48,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       setState(() {
         _defaultQuality = prefs.getInt(kPrefImageQuality) ?? 75;
         _ocrLanguage = prefs.getString(kPrefOcrLanguage) ?? 'en';
-        _adsEnabled = prefs.getBool(kPrefAdsEnabled) ?? true;
-        _premiumUnlocked = prefs.getBool(kPrefPremiumUnlocked) ?? false;
       });
     }
   }
@@ -116,40 +56,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     try {
       final info = await PackageInfo.fromPlatform();
       if (mounted) {
-        setState(() => _appVersion =
-            '${info.version} (build ${info.buildNumber})');
+        setState(() =>
+            _appVersion = '${info.version} (build ${info.buildNumber})');
       }
     } catch (_) {
       if (mounted) setState(() => _appVersion = '1.0.1');
     }
   }
 
-  Future<void> _calcStorage() async {
+  Future<void> _calcCache() async {
     try {
-      int docTotal = 0;
-      final docDir = await getApplicationDocumentsDirectory();
-      await for (final e
-          in docDir.list(recursive: true, followLinks: false)) {
-        if (e is File) docTotal += await e.length();
-      }
-
       int cacheTotal = 0;
-      try {
-        final cacheDir = await getApplicationCacheDirectory();
-        await for (final e
-            in cacheDir.list(recursive: true, followLinks: false)) {
-          if (e is File) cacheTotal += await e.length();
-        }
-      } catch (_) {}
-
-      if (mounted) {
-        setState(() {
-          _storageUsed = _fmt(docTotal);
-          _cacheUsed = _fmt(cacheTotal);
-        });
+      final cacheDir = await getApplicationCacheDirectory();
+      await for (final e
+          in cacheDir.list(recursive: true, followLinks: false)) {
+        if (e is File) cacheTotal += await e.length();
       }
+      if (mounted) setState(() => _cacheUsed = _fmt(cacheTotal));
     } catch (_) {
-      if (mounted) setState(() { _storageUsed = 'Unknown'; _cacheUsed = '0 B'; });
+      if (mounted) setState(() => _cacheUsed = '0 B');
     }
   }
 
@@ -159,7 +84,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       int freed = 0;
       int count = 0;
 
-      // Clear thumbnails from cache directory
       try {
         final cacheDir = await getApplicationCacheDirectory();
         final thumbDir = Directory('${cacheDir.path}/thumbnails');
@@ -173,7 +97,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             }
           }
         }
-        // Clear other temp files in cache root
         await for (final e
             in cacheDir.list(recursive: false, followLinks: false)) {
           if (e is File) {
@@ -187,7 +110,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         }
       } catch (_) {}
 
-      // Clear orphaned thumb refs in documents dir
       final docDir = await getApplicationDocumentsDirectory();
       await for (final e
           in docDir.list(recursive: false, followLinks: false)) {
@@ -202,7 +124,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       }
 
       await DocumentDatabase().clearThumbnailPaths();
-      await _calcStorage();
+      await _calcCache();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(count > 0
@@ -213,10 +135,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text('Error: $e'),
-                behavior: SnackBarBehavior.floating));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          behavior: SnackBarBehavior.floating,
+        ));
       }
     } finally {
       if (mounted) setState(() => _clearingCache = false);
@@ -225,15 +147,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   String _fmt(int bytes) {
     if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
     return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 
   String _getThemeModeName(ThemeMode mode) {
     switch (mode) {
-      case ThemeMode.light: return 'Light';
-      case ThemeMode.dark: return 'Dark';
-      case ThemeMode.system: return 'System (Default)';
+      case ThemeMode.light:
+        return 'Light';
+      case ThemeMode.dark:
+        return 'Dark';
+      case ThemeMode.system:
+        return 'System';
     }
   }
 
@@ -243,7 +170,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context: context,
       builder: (BuildContext ctx) {
         return AlertDialog(
-          title: const Text('Select Theme Mode'),
+          title: const Text('Theme'),
           content: RadioGroup<ThemeMode>(
             groupValue: currentMode,
             onChanged: (ThemeMode? value) => Navigator.of(ctx).pop(value),
@@ -260,7 +187,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   ListTile(
                     leading: Radio<ThemeMode>(value: ThemeMode.system),
-                    title: Text('System (Default)'),
+                    title: Text('System'),
                   ),
                 ],
               ),
@@ -276,29 +203,56 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final brightness = Theme.of(context).brightness;
+    final muted = AppColors.muted(brightness);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      backgroundColor: AppColors.bg(brightness),
+      appBar: AppBar(
+        title: Text(
+          'Settings',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.4,
+              ),
+        ),
+      ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(vertical: 16),
         children: [
-          // ── Appearance ──
           _CardSection(title: 'Appearance', children: [
             ListTile(
-              title: const Text('Theme Mode'),
+              leading: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF9C27B0).withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.dark_mode_outlined,
+                    size: 16, color: Color(0xFF9C27B0)),
+              ),
+              title: const Text('Theme'),
               subtitle: Text(_getThemeModeName(ref.watch(themeProvider))),
-              trailing: const Icon(Icons.chevron_right),
+              trailing: Icon(Icons.chevron_right, color: muted),
               onTap: () => _showThemeModeDialog(context),
             ),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 20),
 
-          // ── Processing defaults ──
-          _CardSection(title: 'Processing defaults', children: [
+          _CardSection(title: 'Processing', children: [
             ListTile(
-              title: const Text('Default image quality'),
-              subtitle: Text('$_defaultQuality%  (used by compress & convert)'),
+              leading: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF9800).withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.tune, size: 16, color: Color(0xFFFF9800)),
+              ),
+              title: const Text('Image quality'),
+              subtitle: Text('$_defaultQuality%'),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -316,12 +270,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 },
               ),
             ),
-            const Divider(height: 1, indent: 16, endIndent: 16),
+            Divider(height: 1, color: AppColors.border(brightness)),
             ListTile(
+              leading: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF3F51B5).withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.translate,
+                    size: 16, color: Color(0xFF3F51B5)),
+              ),
               title: const Text('OCR language'),
-              subtitle: Text(_ocrLanguages
-                  .firstWhere((l) => l['code'] == _ocrLanguage,
-                      orElse: () => {'label': 'English', 'code': 'en'})['label']!),
               trailing: DropdownButton<String>(
                 value: _ocrLanguage,
                 underline: const SizedBox.shrink(),
@@ -340,125 +301,81 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 20),
 
-          // ── Storage ──
           _CardSection(title: 'Storage', children: [
             ListTile(
-              leading: Icon(Icons.folder_outlined, color: cs.primary),
-              title: const Text('Documents'),
-              subtitle: Text(_storageUsed),
-            ),
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            ListTile(
-              leading: Icon(Icons.cached, color: cs.primary),
-              title: const Text('Cache (thumbnails & temp files)'),
+              leading: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE53935).withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.delete_outline,
+                    size: 16, color: Color(0xFFE53935)),
+              ),
+              title: const Text('Clear cache'),
               subtitle: Text(_cacheUsed),
               trailing: _clearingCache
                   ? const SizedBox(
                       width: 20,
                       height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2))
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : TextButton(
                       onPressed: _clearCache,
                       child: const Text('Clear'),
                     ),
             ),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 20),
 
-          // ── Premium ──
-          _CardSection(title: 'Premium', children: [
-            if (_premiumUnlocked)
-              ListTile(
-                leading: Icon(Icons.verified, color: cs.primary),
-                title: const Text('Ads removed'),
-                subtitle: const Text('Thank you for supporting QuickPDF'),
-              )
-            else ...[
-              ListTile(
-                leading: Icon(Icons.workspace_premium_outlined,
-                    color: cs.secondary),
-                title: const Text('Remove Ads'),
-                subtitle: Text(
-                  _premiumPrice != null
-                      ? 'One-time purchase · $_premiumPrice'
-                      : 'One-time purchase · unlock ad-free experience',
+          _CardSection(title: 'Privacy & About', children: [
+            ListTile(
+              leading: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF607D8B).withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                trailing: _purchasePending
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : FilledButton(
-                        onPressed: _purchaseRemoveAds,
-                        child: const Text('Buy'),
-                      ),
+                child: const Icon(Icons.policy_outlined,
+                    size: 16, color: Color(0xFF607D8B)),
               ),
-              const Divider(height: 1, indent: 16, endIndent: 16),
-              ListTile(
-                leading: Icon(Icons.restore, color: cs.primary),
-                title: const Text('Restore purchase'),
-                onTap: _purchasePending ? null : _restorePurchases,
-              ),
-            ],
-          ]),
-          const SizedBox(height: 12),
-
-          // ── Ads ──
-          _CardSection(title: 'Ads', children: [
-            if (_premiumUnlocked)
-              const ListTile(
-                title: Text('Show ads'),
-                subtitle: Text('Disabled while premium is active'),
-                trailing: Switch(value: false, onChanged: null),
-              )
-            else
-              SwitchListTile(
-                title: const Text('Show ads'),
-                subtitle: const Text('Disabling hides ads for testing'),
-                value: _adsEnabled,
-                onChanged: (v) async {
-                  setState(() => _adsEnabled = v);
-                  AdService.adsEnabled = v;
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setBool(kPrefAdsEnabled, v);
-                },
-              ),
-          ]),
-          const SizedBox(height: 12),
-
-          // ── Privacy ──
-          _CardSection(title: 'Privacy', children: [
-            ListTile(
-              leading: Icon(Icons.shield_outlined, color: cs.primary),
-              title: const Text('Privacy First'),
-              subtitle: const Text(
-                  'All document processing is on-device. Ads are served by Google AdMob.'),
-            ),
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            ListTile(
-              leading: Icon(Icons.policy_outlined, color: cs.primary),
               title: const Text('Privacy Policy'),
-              trailing: Icon(Icons.chevron_right, color: Colors.grey[400]),
+              trailing: Icon(Icons.chevron_right, color: muted),
               onTap: () => _showPrivacyPolicy(context),
             ),
-          ]),
-          const SizedBox(height: 12),
-
-          // ── About ──
-          _CardSection(title: 'About', children: [
+            Divider(height: 1, color: AppColors.border(brightness)),
             ListTile(
-              leading: Icon(Icons.info_outline, color: cs.primary),
-              title: const Text('QuickPDF'),
-              subtitle: Text('Version $_appVersion · Built with Flutter'),
+              leading: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF009688).withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.info_outline,
+                    size: 16, color: Color(0xFF009688)),
+              ),
+              title: const Text('Version'),
+              subtitle: Text(_appVersion),
             ),
-            const Divider(height: 1, indent: 16, endIndent: 16),
+            Divider(height: 1, color: AppColors.border(brightness)),
             ListTile(
-              leading: Icon(Icons.balance_outlined, color: cs.primary),
-              title: const Text('Open-source licences'),
-              trailing: Icon(Icons.chevron_right, color: Colors.grey[400]),
+              leading: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: AppColors.navy.withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.balance_outlined,
+                    size: 16, color: AppColors.navy),
+              ),
+              title: const Text('Licences'),
+              trailing: Icon(Icons.chevron_right, color: muted),
               onTap: () => showLicensePage(
                 context: context,
                 applicationName: 'QuickPDF',
@@ -497,70 +414,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   static const String _kPrivacyPolicy = '''
 ## QuickPDF Privacy Policy
 
-**Effective date: May 2026 · Version 1.0.1**
+**Effective date: July 2026**
 
-QuickPDF ("the app") is an offline document management tool developed for Android.
-This policy explains what data the app accesses, how it is used, and your rights.
+QuickPDF processes documents **on your device**. There are no accounts and no file uploads.
 
----
+### Permissions
+- **Camera** — document scanning
+- **Storage** — open and save PDFs/images you choose
+- **Internet** — ads (Start.io) and optional store features
 
-### 1. Data We Collect
+### Files
+Files you open or create stay on your device. Temporary cache can be cleared in Settings.
 
-QuickPDF itself collects **no personal data**. The app has no accounts, no servers,
-and performs no uploads of your files or documents.
+### OCR
+Text recognition uses on-device ML Kit models. Recognised text does not leave your device.
 
-The app displays ads via **Google AdMob**, which may collect:
-- Device Advertising ID
-- IP address / approximate location
-- App interaction data (for ad relevance)
+### Advertising
+QuickPDF shows ads via **Start.io**. Document content is not used for ads.
 
----
-
-### 2. Permissions Used
-
-| Permission | Why it is needed |
-|---|---|
-| **Camera** | Capture photos for document scanning |
-| **Storage (read)** | Open PDF and image files you select |
-| **Storage (write)** | Save processed PDFs to your device |
-| **Internet** | Required by Google AdMob to serve ads |
-| **Advertising ID** | Used by AdMob for personalised ads |
-
----
-
-### 3. Files & Documents
-
-- Files you open or create are stored **only on your device**.
-- QuickPDF never uploads, syncs, or transmits any file content.
-- Temporary files are stored in the app's private directory and cleaned up automatically.
-
----
-
-### 4. OCR & Text Recognition
-
-Text recognition is performed **fully offline** using Google ML Kit's on-device models.
-Recognised text never leaves your device.
-
----
-
-### 5. Advertising (Google AdMob)
-
-QuickPDF uses **Google AdMob** to display banner and interstitial ads.
-
-**Your choices:**
-- To opt out of personalised ads: **Android Settings → Google → Ads → Opt out**
-- To reset your Advertising ID: **Android Settings → Google → Ads → Reset ID**
-
-Google's Privacy Policy: https://policies.google.com/privacy
-
----
-
-### 6. Contact
-
-Questions about this policy:
-**stewiegriffin3108ia@gmail.com**
-
-*Document processing is fully local. Only ad serving requires internet access.*
+Contact: **stewiegriffin3108ia@gmail.com**
 ''';
 }
 
@@ -572,16 +444,32 @@ class _CardSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 6),
-          child: Text(title,
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+          child: Text(
+            title.toUpperCase(),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+              color: AppColors.muted(brightness),
+            ),
+          ),
         ),
-        Card(child: Column(children: children)),
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: AppColors.surface(brightness),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border(brightness)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(children: children),
+        ),
       ],
     );
   }
