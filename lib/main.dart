@@ -4,7 +4,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:quick_pdf/constants/preference_keys.dart';
 import 'package:quick_pdf/providers/theme_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/premium_service.dart';
 import 'package:quick_pdf/router/app_router.dart';
@@ -33,13 +32,11 @@ Future<void> main() async {
     child: QuickPDFApp(router: router),
   ));
 
-  // Initialise AdMob and background maintenance after the first frame.
+  // Initialise Start.io and background maintenance after the first frame.
   WidgetsBinding.instance.addPostFrameCallback((_) {
     DocumentDatabase().cleanupStaleThumbnails();
     if (AdService.shouldShowAds) {
-      MobileAds.instance
-          .initialize()
-          .then((_) => AdService().loadInterstitial());
+      AdService().loadInterstitial();
     }
   });
 }

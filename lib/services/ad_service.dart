@@ -1,10 +1,10 @@
 import 'package:flutter/foundation.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:quick_pdf/constants/preference_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:startapp_sdk/startapp.dart';
 
-/// Singleton that owns the interstitial ad lifecycle.
-/// The banner is managed separately in _BannerAdArea (main_nav_page.dart).
+/// Singleton that owns Start.io interstitial / rewarded ad lifecycles.
+/// The banner is managed separately in `_BannerAdArea` (main_nav_page.dart).
 ///
 /// Frequency capping: shows an interstitial at most once every
 /// [_capEveryN] tool completions to reduce ad fatigue.
@@ -13,15 +13,13 @@ class AdService {
   static final AdService _instance = AdService._();
   factory AdService() => _instance;
 
-  static const String bannerAdUnitId =
-      'ca-app-pub-9418386170210711/8362178112';
-  static const String interstitialAdUnitId =
-      'ca-app-pub-9418386170210711/3537611287';
-  /// Dedicated rewarded ad unit — replace with your AdMob rewarded placement ID.
-  static const String rewardedAdUnitId =
-      'ca-app-pub-9418386170210711/0000000000';
+  /// Start.io App ID from the portal (ads.txt account remains `177461104`).
+  static const String startIoAppId = '206613327';
+
   static const String _prefCompletions = 'ad_completion_count';
   static const int _capEveryN = 3;
+
+  final StartAppSdk _sdk = StartAppSdk();
 
   @visibleForTesting
   static int get capEveryN => _capEveryN;
@@ -40,8 +38,9 @@ class AdService {
   @visibleForTesting
   bool forceInterstitialReady = false;
 
-  InterstitialAd? _interstitialAd;
+  StartAppInterstitialAd? _interstitialAd;
   bool _isInterstitialReady = false;
+  bool _sdkConfigured = false;
 
   bool get isInterstitialReady => _isInterstitialReady;
 
@@ -61,41 +60,45 @@ class AdService {
     adsEnabled = prefs.getBool(kPrefAdsEnabled) ?? true;
   }
 
+  /// Configures Start.io once (test mode in debug builds).
+  Future<void> configureSdk() async {
+    if (_sdkConfigured || !shouldShowAds) return;
+    _sdkConfigured = true;
+    // Test ads only while developing — disabled in release builds.
+    await _sdk.setTestAdsEnabled(kDebugMode);
+  }
+
+  StartAppSdk get sdk => _sdk;
+
   // ── Interstitial ──────────────────────────────────────────────────────────
 
-  void loadInterstitial() {
+  Future<void> loadInterstitial() async {
     if (!shouldShowAds) return;
+    await configureSdk();
     _isInterstitialReady = false;
-    InterstitialAd.load(
-      adUnitId: interstitialAdUnitId,
-      request: const AdRequest(),
-      adLoadCallback: InterstitialAdLoadCallback(
-        onAdLoaded: (ad) {
-          _interstitialAd = ad;
-          _isInterstitialReady = true;
-          ad.fullScreenContentCallback = FullScreenContentCallback(
-            onAdDismissedFullScreenContent: (_) {
-              ad.dispose();
-              _interstitialAd = null;
-              _isInterstitialReady = false;
-              loadInterstitial();
-            },
-            onAdFailedToShowFullScreenContent: (_, error) {
-              debugPrint('AdService: interstitial show failed — $error');
-              ad.dispose();
-              _interstitialAd = null;
-              _isInterstitialReady = false;
-              loadInterstitial();
-            },
-          );
-        },
-        onAdFailedToLoad: (error) {
-          debugPrint('AdService: interstitial load failed — $error');
+
+    try {
+      final ad = await _sdk.loadInterstitialAd(
+        onAdHidden: () {
+          _interstitialAd?.dispose();
           _interstitialAd = null;
           _isInterstitialReady = false;
+          loadInterstitial();
         },
-      ),
-    );
+        onAdNotDisplayed: () {
+          _interstitialAd?.dispose();
+          _interstitialAd = null;
+          _isInterstitialReady = false;
+          loadInterstitial();
+        },
+      );
+      _interstitialAd = ad;
+      _isInterstitialReady = true;
+    } catch (e) {
+      debugPrint('AdService: interstitial load failed — $e');
+      _interstitialAd = null;
+      _isInterstitialReady = false;
+    }
   }
 
   /// Call after each tool completion. Shows an interstitial once every
@@ -106,7 +109,7 @@ class AdService {
     final count = (prefs.getInt(_prefCompletions) ?? 0) + 1;
     await prefs.setInt(_prefCompletions, count);
     if (count % _capEveryN == 0) {
-      showInterstitialIfReady();
+      await showInterstitialIfReady();
     }
   }
 
@@ -116,22 +119,37 @@ class AdService {
     return prefs.getInt(_prefCompletions) ?? 0;
   }
 
-  void showInterstitialIfReady() {
+  Future<void> showInterstitialIfReady() async {
     if (!shouldShowAds) return;
-    if (forceInterstitialReady ||
-        (_isInterstitialReady && _interstitialAd != null)) {
+    if (forceInterstitialReady) {
       interstitialShowCount++;
-      if (!forceInterstitialReady) {
-        _interstitialAd!.show();
+      return;
+    }
+    if (!_isInterstitialReady || _interstitialAd == null) return;
+
+    try {
+      final shown = await _interstitialAd!.show();
+      if (shown) {
+        interstitialShowCount++;
+        // Interstitial can only be shown once.
+        _interstitialAd = null;
+        _isInterstitialReady = false;
+        loadInterstitial();
       }
+    } catch (e) {
+      debugPrint('AdService: interstitial show failed — $e');
+      _interstitialAd?.dispose();
+      _interstitialAd = null;
+      _isInterstitialReady = false;
+      loadInterstitial();
     }
   }
 
   // ── Rewarded ads ──────────────────────────────────────────────────────────
 
-  /// Loads and shows a rewarded ad, calling [onRewarded] if the user earns
-  /// the reward. Falls back to calling [onRewarded] immediately if the ad
-  /// fails, so the feature is never blocked.
+  /// Loads and shows a rewarded video, calling [onRewarded] when the video
+  /// completes. Falls back to [onRewarded] immediately if the ad fails so
+  /// the feature is never blocked.
   Future<void> showRewardedOrFallback({
     required VoidCallback onRewarded,
     VoidCallback? onDismissed,
@@ -141,36 +159,38 @@ class AdService {
       return;
     }
 
-    RewardedAd? ad;
-    await RewardedAd.load(
-      adUnitId: rewardedAdUnitId,
-      request: const AdRequest(),
-      rewardedAdLoadCallback: RewardedAdLoadCallback(
-        onAdLoaded: (loaded) => ad = loaded,
-        onAdFailedToLoad: (error) {
-          debugPrint('AdService: rewarded load failed — $error. Falling back.');
-          onRewarded(); // never block the user
+    await configureSdk();
+    var rewarded = false;
+
+    try {
+      final ad = await _sdk.loadRewardedVideoAd(
+        onVideoCompleted: () {
+          rewarded = true;
+          onRewarded();
         },
-      ),
-    );
+        onAdHidden: () {
+          if (!rewarded) {
+            // User closed early — still fall back so tools are not blocked.
+            onRewarded();
+          }
+          onDismissed?.call();
+        },
+        onAdNotDisplayed: () {
+          debugPrint('AdService: rewarded not displayed. Falling back.');
+          onRewarded();
+        },
+      );
 
-    if (ad == null) return; // already handled by onAdFailedToLoad
-
-    ad!.fullScreenContentCallback = FullScreenContentCallback(
-      onAdDismissedFullScreenContent: (_) {
-        ad!.dispose();
-        onDismissed?.call();
-      },
-      onAdFailedToShowFullScreenContent: (_, error) {
-        debugPrint('AdService: rewarded show failed — $error. Falling back.');
-        ad!.dispose();
-        onRewarded(); // fall back
-      },
-    );
-
-    await ad!.show(
-      onUserEarnedReward: (_, __) => onRewarded(),
-    );
+      final shown = await ad.show();
+      if (!shown && !rewarded) {
+        debugPrint('AdService: rewarded show returned false. Falling back.');
+        onRewarded();
+      }
+      ad.dispose();
+    } catch (e) {
+      debugPrint('AdService: rewarded load/show failed — $e. Falling back.');
+      onRewarded();
+    }
   }
 
   void dispose() {

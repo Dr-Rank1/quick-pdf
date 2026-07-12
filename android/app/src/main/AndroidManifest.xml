@@ -51,9 +51,21 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Start.io App ID from portal (ads.txt account: 177461104) -->
         <meta-data
-            android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-9418386170210711~3373959750"/>
+            android:name="com.startapp.sdk.APPLICATION_ID"
+            android:value="206613327" />
+        <meta-data
+            android:name="com.startapp.sdk.RETURN_ADS_ENABLED"
+            android:value="false" />
+        <provider
+            android:authorities="com.startapp.flutter.sdk.${applicationId}"
+            android:name="com.startapp.flutter.sdk.StartAppFlutterHelper"
+            android:exported="false">
+            <meta-data
+                android:name="com.startapp.sdk.SPLASH_ADS_ENABLED"
+                android:value="false" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

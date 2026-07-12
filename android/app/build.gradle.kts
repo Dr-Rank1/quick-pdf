@@ -60,6 +60,14 @@ android {
     }
 }
 
+// Start.io Flutter plugin resolves inapp-sdk 5.3.x which requires compileSdk 37.
+// Pin to 5.2.6 so we can keep compileSdk 36 with AGP 8.11.1.
+configurations.all {
+    resolutionStrategy {
+        force("com.startapp:inapp-sdk:5.2.6")
+    }
+}
+
 flutter {
     source = "../.."
 }

@@ -48,7 +48,7 @@ QuickPDF is an **offline-first PDF workstation**. All document processing — me
 
 - OCR uses **Google ML Kit** locally — no network calls for text recognition
 - Files live in the app's private documents directory
-- A written privacy policy is shown in Settings (`PRIVACY_POLICY.md` rendered via `flutter_markdown`)
+- A written privacy policy is shown in Settings (inlined markdown)
 - Temporary OCR renders are deleted per-page during processing
 
 ---
@@ -1020,4 +1020,4 @@ lib/
 
 ---
 
-*Generated from source analysis of QuickPDF v1.0.1+6. For build and release instructions, see `README.md`. For the original shorter doc, see `DOCUMENTATION.md`.*
+*Generated from source analysis of QuickPDF v1.0.1+6. For UI redesign context, see `FIGMA_UI_BRIEF.md`.*

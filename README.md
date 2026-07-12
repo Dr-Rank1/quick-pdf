@@ -1,17 +1,16 @@
-# quick_pdf
+# QuickPDF
 
-A new Flutter project.
+Offline-first PDF utility for Android & iOS: scan, merge, split, compress, OCR, annotate, sign, and protect — all on-device.
 
-## Getting Started
+## Docs
 
-This project is a starting point for a Flutter application.
+- [`FIGMA_UI_BRIEF.md`](FIGMA_UI_BRIEF.md) — design brief for Figma AI UI redesign
+- [`APP_OVERVIEW.md`](APP_OVERVIEW.md) — technical application overview
+- [`ads.txt`](ads.txt) — Start.io authorized sellers list (host on developer domain)
 
-A few resources to get you started if this is your first Flutter project:
+## Develop
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```bash
+flutter pub get
+flutter run
+```
