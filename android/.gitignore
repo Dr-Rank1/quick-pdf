@@ -13,3 +13,5 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+keystore_credentials.txt
+upload_certificate.pem
