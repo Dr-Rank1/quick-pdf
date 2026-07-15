@@ -13,9 +13,10 @@ class AdService {
   factory AdService() => _instance;
 
   /// Start.io App ID from the portal (ads.txt account remains `177461104`).
-  static const String startIoAppId = '206613327';
+  static const String startIoAppId = '206385656';
 
   static const String _prefCompletions = 'ad_completion_count';
+  static const String _prefPremiumUntil = 'premium_until_timestamp';
   static const int _capEveryN = 3;
 
   final StartAppSdk _sdk = StartAppSdk();
@@ -43,13 +44,33 @@ class AdService {
 
   bool get isInterstitialReady => _isInterstitialReady;
 
-  // ── Ads are always on (no opt-out / premium remove-ads) ───────────────────
+  static bool _adsEnabledBySettings = true;
+  static int _premiumUntil = 0;
 
   /// Whether any ad format should be requested or shown.
-  static bool get shouldShowAds => true;
+  static bool get shouldShowAds {
+    if (!_adsEnabledBySettings) return false;
+    if (DateTime.now().millisecondsSinceEpoch < _premiumUntil) return false;
+    return true;
+  }
 
   static Future<void> loadPreferences() async {
-    // Reserved for future ad-related prefs; ads remain enabled permanently.
+    final prefs = await SharedPreferences.getInstance();
+    _adsEnabledBySettings = prefs.getBool('ads_enabled') ?? true;
+    _premiumUntil = prefs.getInt(_prefPremiumUntil) ?? 0;
+  }
+
+  static Future<void> setAdsEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('ads_enabled', enabled);
+    _adsEnabledBySettings = enabled;
+  }
+
+  static Future<void> activate24hPremium() async {
+    final prefs = await SharedPreferences.getInstance();
+    final until = DateTime.now().add(const Duration(hours: 24)).millisecondsSinceEpoch;
+    await prefs.setInt(_prefPremiumUntil, until);
+    _premiumUntil = until;
   }
 
   /// Configures Start.io once (test mode in debug builds).

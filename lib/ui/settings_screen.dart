@@ -10,6 +10,8 @@ import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/providers/theme_provider.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/theme/app_colors.dart';
+import 'package:quick_pdf/services/ad_service.dart';
+import 'package:startapp_sdk/startapp.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -384,6 +386,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ]),
           const SizedBox(height: 24),
+
+          if (AdService.shouldShowAds)
+            _CardSection(title: 'Premium', children: [
+              ListTile(
+                leading: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.13),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.star, size: 16, color: Colors.amber),
+                ),
+                title: const Text('24h Ad-Free Premium'),
+                subtitle: const Text('Watch a short video to remove ads for 24 hours'),
+                trailing: TextButton(
+                  onPressed: () {
+                    AdService().showRewardedOrFallback(onRewarded: () async {
+                      await AdService.activate24hPremium();
+                      if (mounted) setState(() {});
+                    });
+                  },
+                  child: const Text('Watch'),
+                ),
+              ),
+            ]),
+            
+          if (AdService.shouldShowAds) const _MrecAd(),
+          const SizedBox(height: 24),
         ],
       ),
     );
@@ -471,6 +502,43 @@ class _CardSection extends StatelessWidget {
           child: Column(children: children),
         ),
       ],
+    );
+  }
+}
+
+class _MrecAd extends StatefulWidget {
+  const _MrecAd();
+
+  @override
+  State<_MrecAd> createState() => _MrecAdState();
+}
+
+class _MrecAdState extends State<_MrecAd> {
+  StartAppBannerAd? _ad;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AdService.shouldShowAds) {
+      AdService().sdk.loadBannerAd(StartAppBannerType.MREC).then((ad) {
+        if (mounted) setState(() => _ad = ad);
+      }).catchError((_) {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _ad?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ad == null) return const SizedBox.shrink();
+    return Container(
+      alignment: Alignment.center,
+      margin: const EdgeInsets.only(top: 24),
+      child: StartAppBanner(_ad!),
     );
   }
 }

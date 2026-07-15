@@ -16,6 +16,7 @@ import 'package:quick_pdf/ui/widgets/doc_thumb_hero.dart';
 import 'package:quick_pdf/theme/app_colors.dart';
 import 'package:quick_pdf/theme/app_theme.dart';
 import 'package:skeletonizer/skeletonizer.dart';
+import 'package:startapp_sdk/startapp.dart';
 
 String _fmtSize(int bytes) {
   if (bytes < 1024) return '$bytes B';
@@ -859,19 +860,27 @@ class _DocumentGridState extends ConsumerState<_DocumentGrid> {
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
                 sliver: SliverGrid(
                   delegate: SliverChildBuilderDelegate(
-                    (_, i) => _DocCard(
-                      doc: filtered[i],
-                      onTap: () =>
-                          widget.onDocumentTap(filtered[i]['path'] ?? ''),
-                      onDelete: () =>
-                          widget.onDocumentDelete(filtered[i]['path'] ?? ''),
-                      onRename: () => _renameDoc(
-                          filtered[i]['path'] ?? '', filtered[i]['name'] ?? ''),
-                      onToggleFavourite: () => ref
-                          .read(documentDatabaseProvider)
-                          .toggleFavourite(filtered[i]['path'] ?? ''),
-                    ),
-                    childCount: filtered.length,
+                    (_, i) {
+                      if (AdService.shouldShowAds && (i + 1) % 9 == 0) {
+                        return const _NativeAdCard();
+                      }
+                      final docIndex = AdService.shouldShowAds ? i - (i ~/ 9) : i;
+                      if (docIndex >= filtered.length) return const SizedBox.shrink();
+                      
+                      return _DocCard(
+                        doc: filtered[docIndex],
+                        onTap: () =>
+                            widget.onDocumentTap(filtered[docIndex]['path'] ?? ''),
+                        onDelete: () =>
+                            widget.onDocumentDelete(filtered[docIndex]['path'] ?? ''),
+                        onRename: () => _renameDoc(
+                            filtered[docIndex]['path'] ?? '', filtered[docIndex]['name'] ?? ''),
+                        onToggleFavourite: () => ref
+                            .read(documentDatabaseProvider)
+                            .toggleFavourite(filtered[docIndex]['path'] ?? ''),
+                      );
+                    },
+                    childCount: AdService.shouldShowAds ? filtered.length + (filtered.length ~/ 8) : filtered.length,
                   ),
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: cols,
@@ -888,16 +897,24 @@ class _DocumentGridState extends ConsumerState<_DocumentGrid> {
             padding: const EdgeInsets.only(bottom: 96),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
-                (_, i) => _DocListItem(
-                  doc: filtered[i],
-                  onTap: () =>
-                      widget.onDocumentTap(filtered[i]['path'] ?? ''),
-                  onDelete: () =>
-                      widget.onDocumentDelete(filtered[i]['path'] ?? ''),
-                  onRename: () => _renameDoc(
-                      filtered[i]['path'] ?? '', filtered[i]['name'] ?? ''),
-                ),
-                childCount: filtered.length,
+                (_, i) {
+                  if (AdService.shouldShowAds && (i + 1) % 9 == 0) {
+                    return const SizedBox(height: 80, child: _NativeAdCard());
+                  }
+                  final docIndex = AdService.shouldShowAds ? i - (i ~/ 9) : i;
+                  if (docIndex >= filtered.length) return const SizedBox.shrink();
+                  
+                  return _DocListItem(
+                    doc: filtered[docIndex],
+                    onTap: () =>
+                        widget.onDocumentTap(filtered[docIndex]['path'] ?? ''),
+                    onDelete: () =>
+                        widget.onDocumentDelete(filtered[docIndex]['path'] ?? ''),
+                    onRename: () => _renameDoc(
+                        filtered[docIndex]['path'] ?? '', filtered[docIndex]['name'] ?? ''),
+                  );
+                },
+                childCount: AdService.shouldShowAds ? filtered.length + (filtered.length ~/ 8) : filtered.length,
               ),
             ),
           ),
@@ -1807,3 +1824,84 @@ class _ImportProgressPill extends StatelessWidget {
     );
   }
 }
+
+class _NativeAdCard extends StatefulWidget {
+  const _NativeAdCard();
+  @override
+  State<_NativeAdCard> createState() => _NativeAdCardState();
+}
+
+class _NativeAdCardState extends State<_NativeAdCard> {
+  StartAppNativeAd? _ad;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AdService.shouldShowAds) {
+      AdService().sdk.loadNativeAd().then((ad) {
+        if (mounted) setState(() => _ad = ad);
+      }).catchError((e) {
+        debugPrint('Failed to load native ad: $e');
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _ad?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ad == null) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          borderRadius: BorderRadius.circular(12),
+        ),
+      );
+    }
+    return StartAppNative(
+      _ad!,
+      (context, setState, nativeAd) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: nativeAd.imageUrl != null
+                    ? Image.network(nativeAd.imageUrl!, fit: BoxFit.cover)
+                    : const Icon(Icons.ad_units, color: Colors.grey),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(4)),
+                      child: const Text('AD', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.black)),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(nativeAd.title ?? 'Advertisement', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                    if (nativeAd.description != null)
+                      Text(nativeAd.description!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+

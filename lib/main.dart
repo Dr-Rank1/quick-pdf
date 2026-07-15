@@ -44,12 +44,48 @@ Future<void> main() async {
   });
 }
 
-class QuickPDFApp extends ConsumerWidget {
+class QuickPDFApp extends ConsumerStatefulWidget {
   final GoRouter router;
   const QuickPDFApp({super.key, required this.router});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<QuickPDFApp> createState() => _QuickPDFAppState();
+}
+
+class _QuickPDFAppState extends ConsumerState<QuickPDFApp> with WidgetsBindingObserver {
+  DateTime? _lastPausedTime;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _lastPausedTime = DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      if (_lastPausedTime != null) {
+        final backgroundDuration = DateTime.now().difference(_lastPausedTime!);
+        if (backgroundDuration.inMinutes >= 2) {
+          if (AdService.shouldShowAds) {
+            AdService().showInterstitialIfReady();
+          }
+        }
+      }
+      _lastPausedTime = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final themeMode = ref.watch(themeProvider);
 
     return MaterialApp.router(
@@ -58,7 +94,7 @@ class QuickPDFApp extends ConsumerWidget {
       theme: buildQuickPdfTheme(Brightness.light),
       darkTheme: buildQuickPdfTheme(Brightness.dark),
       themeMode: themeMode,
-      routerConfig: router,
+      routerConfig: widget.router,
     );
   }
 }
