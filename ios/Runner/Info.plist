@@ -50,7 +50,7 @@
 	<key>NSFaceIDUsageDescription</key>
 	<string>QuickPDF uses Face ID to unlock saved passwords for encrypted PDFs.</string>
 	<key>com.startapp.sdk.APPLICATION_ID</key>
-	<string>206613327</string>
+	<string>206385656</string>
 	<key>com.startapp.sdk.RETURN_ADS_ENABLED</key>
 	<false/>
 	<key>com.startapp.sdk.SPLASH_ADS_ENABLED</key>

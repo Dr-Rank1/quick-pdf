@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:quick_pdf/ui/home_screen.dart';
 
 import 'test_helpers.dart';
@@ -10,7 +11,10 @@ import 'test_helpers.dart';
 void main() {
   late Directory tmpDir;
 
-  setUpAll(initTestDatabase);
+  setUpAll(() {
+    initTestDatabase();
+    GoogleFonts.config.allowRuntimeFetching = false;
+  });
 
   setUp(() async {
     tmpDir = await Directory.systemTemp.createTemp('qpdf_home_test_');
@@ -60,15 +64,15 @@ void main() {
       await tester.tap(find.text('Tools'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Create'), findsOneWidget);
-      expect(find.text('PDF Tools'), findsOneWidget);
+      expect(find.text('CREATE'), findsOneWidget);
+      expect(find.text('PDF TOOLS'), findsOneWidget);
 
       await tester.scrollUntilVisible(
-        find.text('Security & Metadata'),
+        find.text('SECURITY & METADATA'),
         200,
         scrollable: find.byType(Scrollable).last,
       );
-      expect(find.text('Security & Metadata'), findsOneWidget);
+      expect(find.text('SECURITY & METADATA'), findsOneWidget);
     });
   });
 }

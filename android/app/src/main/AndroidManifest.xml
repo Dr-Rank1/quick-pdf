@@ -5,19 +5,21 @@
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
 
-    <!-- Storage — Android ≤ 12 -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32"/>
+    <!-- The camera plugin declares RECORD_AUDIO / WRITE_EXTERNAL_STORAGE for
+         video capture, but the document scanner only takes stills with
+         enableAudio: false and saves to app-private storage. Remove them (and
+         the READ_EXTERNAL_STORAGE the manifest merger implies as a result). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"
+        tools:node="remove"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29"
-        tools:replace="android:maxSdkVersion"/>
-
-    <!-- Storage — Android 13+ (granular media permissions) -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:node="remove"/>
 
     <uses-permission android:name="android.permission.INTERNET"/>
-    <uses-permission android:name="com.google.android.gms.permission.AD_ID"/>
+    <uses-permission
+        android:name="com.google.android.gms.permission.AD_ID"
+        tools:node="merge"/>
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
 
     <application
@@ -54,7 +56,7 @@
         <!-- Start.io App ID from portal (ads.txt account: 177461104) -->
         <meta-data
             android:name="com.startapp.sdk.APPLICATION_ID"
-            android:value="206613327" />
+            android:value="206385656" />
         <meta-data
             android:name="com.startapp.sdk.RETURN_ADS_ENABLED"
             android:value="false" />

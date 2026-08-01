@@ -3,7 +3,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:quick_pdf/theme/app_colors.dart';
 
 ThemeData buildQuickPdfTheme(Brightness brightness) {
-  final isDark = brightness == Brightness.dark;
   final bg = AppColors.bg(brightness);
   final surface = AppColors.surface(brightness);
   final surface2 = AppColors.surface2(brightness);
@@ -91,11 +90,11 @@ ThemeData buildQuickPdfTheme(Brightness brightness) {
         );
       }),
     ),
-    floatingActionButtonTheme: FloatingActionButtonThemeData(
+    floatingActionButtonTheme: const FloatingActionButtonThemeData(
       backgroundColor: AppColors.amber,
       foregroundColor: Colors.black,
       elevation: 4,
-      shape: const CircleBorder(),
+      shape: CircleBorder(),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,

@@ -49,6 +49,7 @@ app.*.map.json
 android/key.properties
 android/app/*.jks
 android/app/*.keystore
+upload_certificate.pem
 
 # Design extract scratch (keep only design_reference/canonical)
 design_reference/_extract/

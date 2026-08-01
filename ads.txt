@@ -139,3 +139,10 @@ E-Planning.net, dfe3c13594cd35a3, RESELLER, c1ba615865ed87b2
 trustedstack.com, TSL72ADG4, RESELLER
 video.unrulymedia.com, 703273072, RESELLER
 ignitemediatech.com, pub_11154, RESELLER
+bidmachine.io, 1700, RESELLER
+bold-win.com, 1162, RESELLER, 71746737d0bab951
+triplelift.com, 14699, RESELLER, 6c33edb13117fd86
+lijit.com, 584539, RESELLER, fafdf38b16bf6b2b
+bluexad.ai, 2064614586140594176, RESELLER
+bidplay.ai, 2607009, RESELLER
+taipeidigital.com, 01012311678, RESELLER

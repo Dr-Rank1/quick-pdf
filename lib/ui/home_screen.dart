@@ -684,17 +684,17 @@ class _DocumentGridState extends ConsumerState<_DocumentGrid> {
       enabled: true,
       child: CustomScrollView(
         slivers: [
-          SliverToBoxAdapter(
+          const SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              padding: EdgeInsets.fromLTRB(12, 10, 12, 0),
               child: TextField(
                 enabled: false,
                 decoration: InputDecoration(
                   hintText: 'Search documents…',
-                  prefixIcon: const Icon(Icons.search, size: 18),
+                  prefixIcon: Icon(Icons.search, size: 18),
                   isDense: true,
                   contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 ),
               ),
             ),

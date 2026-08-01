@@ -58,6 +58,22 @@ android {
             )
         }
     }
+
+    // Required for Google Play's 16KB memory page-size compatibility checks.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+            // Prefer our 16 KB-aligned local rebuild of libbbhelper.so over the
+            // 4 KB-aligned one shipped by pdf_render_maintained.
+            pickFirsts += "**/libbbhelper.so"
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
 }
 
 // Start.io Flutter plugin resolves inapp-sdk 5.3.x which requires compileSdk 37.
