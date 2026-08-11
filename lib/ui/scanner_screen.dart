@@ -88,12 +88,17 @@ class _ScannerScreenState extends State<ScannerScreen>
   }
 
   Future<void> _capture() async {
-    if (_controller == null || !_isInitialized || _isCapturing || _isProcessing) {
+    final controller = _controller;
+    if (controller == null ||
+        !_isInitialized ||
+        _isCapturing ||
+        _isProcessing) {
       return;
     }
     setState(() => _isCapturing = true);
     try {
-      final XFile photo = await _controller!.takePicture();
+      final XFile photo = await controller.takePicture();
+      if (!mounted || !identical(_controller, controller)) return;
       setState(() => _isProcessing = true);
 
       final File enhanced = await ScannerService.enhanceDocument(
@@ -102,16 +107,17 @@ class _ScannerScreenState extends State<ScannerScreen>
       );
 
       // Delete the raw camera temp file
-      try { await File(photo.path).delete(); } catch (_) {}
+      try {
+        await File(photo.path).delete();
+      } catch (_) {}
 
-      if (mounted) {
-        setState(() {
-          _pages.add(enhanced);
-          _isCapturing = false;
-          _isProcessing = false;
-        });
-        HapticFeedback.lightImpact();
-      }
+      if (!mounted || !identical(_controller, controller)) return;
+      setState(() {
+        _pages.add(enhanced);
+        _isCapturing = false;
+        _isProcessing = false;
+      });
+      HapticFeedback.lightImpact();
     } catch (e, stack) {
       await ErrorLogger.log('scanner', e, stack);
       if (mounted) {

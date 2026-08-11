@@ -47,15 +47,21 @@ class _SplitScreenState extends State<SplitScreen> {
       final doc = await PdfDocument.openFile(widget.file.path);
       final page = await doc.getPage(1);
       final rendered = await page.render(width: 140, height: 180);
-      final uiImage = await rendered.createImageIfNotAvailable();
-      final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
-      uiImage.dispose();
+      Uint8List? thumbBytes;
+      try {
+        final uiImage = await rendered.createImageIfNotAvailable();
+        final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
+        uiImage.dispose();
+        thumbBytes = bd?.buffer.asUint8List();
+      } finally {
+        rendered.dispose();
+      }
       final count = doc.pageCount;
       await doc.dispose();
       if (mounted) {
         setState(() {
           _pageCount = count;
-          _thumbnail = bd?.buffer.asUint8List();
+          _thumbnail = thumbBytes;
           _toPage = count;
         });
       }

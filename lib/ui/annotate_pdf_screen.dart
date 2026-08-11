@@ -61,6 +61,7 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
   Uint8List? _pageImage;
   bool _loadingPage = false;
   render.PdfDocument? _doc;
+  int _loadGen = 0;
 
   bool _isProcessing = false;
   int _progress = 0;
@@ -81,7 +82,10 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
 
   @override
   void dispose() {
-    _doc?.dispose();
+    _loadGen++;
+    final doc = _doc;
+    _doc = null;
+    doc?.dispose();
     super.dispose();
   }
 
@@ -93,8 +97,11 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
   }
 
   Future<void> _loadPdf(File file) async {
-    _doc?.dispose();
+    final gen = ++_loadGen;
+    final previous = _doc;
     _doc = null;
+    previous?.dispose();
+    if (!mounted) return;
     setState(() {
       _pdfFile = file;
       _pageImage = null;
@@ -103,34 +110,47 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
     });
     try {
       final doc = await render.PdfDocument.openFile(file.path);
+      if (!mounted || gen != _loadGen) {
+        await doc.dispose();
+        return;
+      }
       setState(() {
         _doc = doc;
         _pageCount = doc.pageCount;
       });
-      _loadPageImage();
+      await _loadPageImage();
     } catch (e) {
-      _snack('Failed to open PDF: $e');
+      if (mounted) _snack('Failed to open PDF: $e');
     }
   }
 
   Future<void> _loadPageImage() async {
     final doc = _doc;
+    final gen = _loadGen;
+    final pageNum = _currentPage;
     if (doc == null) return;
     setState(() {
       _loadingPage = true;
       _pageImage = null;
     });
     try {
-      final page = await doc.getPage(_currentPage);
+      final page = await doc.getPage(pageNum);
+      if (!mounted || gen != _loadGen || !identical(_doc, doc)) return;
       final rendered = await page.render(width: _canvasRenderWidth.round());
-      final uiImage = await rendered.createImageIfNotAvailable();
-      final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
-      uiImage.dispose();
-      if (mounted && bd != null) {
-        setState(() => _pageImage = bd.buffer.asUint8List());
+      try {
+        final uiImage = await rendered.createImageIfNotAvailable();
+        final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
+        uiImage.dispose();
+        if (mounted && gen == _loadGen && bd != null) {
+          setState(() => _pageImage = bd.buffer.asUint8List());
+        }
+      } finally {
+        rendered.dispose();
       }
     } catch (_) {}
-    if (mounted) setState(() => _loadingPage = false);
+    if (mounted && gen == _loadGen) {
+      setState(() => _loadingPage = false);
+    }
   }
 
   Color get _toolColor {
@@ -199,23 +219,28 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
             if (mounted) setState(() => _progress = i);
             final page = await source.getPage(i);
             final pageImg = await page.render(
-              width: (page.width * 2).round(),
-              height: (page.height * 2).round(),
+              width: (page.width * 1.5).round().clamp(72, 1600),
+              height: (page.height * 1.5).round().clamp(72, 1600),
             );
+            late final img.Image baseImg;
+            try {
+              final pixels = Uint8List.fromList(pageImg.pixels);
+              baseImg = img.Image.fromBytes(
+                width: pageImg.width,
+                height: pageImg.height,
+                bytes: pixels.buffer,
+                format: img.Format.uint8,
+                numChannels: 4,
+                order: img.ChannelOrder.rgba,
+              );
+            } finally {
+              pageImg.dispose();
+            }
             await Future.delayed(Duration.zero);
-
-            final baseImg = img.Image.fromBytes(
-              width: pageImg.width,
-              height: pageImg.height,
-              bytes: pageImg.pixels.buffer,
-              format: img.Format.uint8,
-              numChannels: 4,
-              order: img.ChannelOrder.rgba,
-            );
 
             final strokes = _annotations[i] ?? [];
             if (strokes.isNotEmpty) {
-              final widthScale = pageImg.width /
+              final widthScale = baseImg.width /
                   (_canvasSize.width > 0
                       ? _canvasSize.width
                       : _canvasRenderWidth);
@@ -223,7 +248,7 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
             }
 
             final encoded =
-                Uint8List.fromList(img.encodeJpg(baseImg, quality: 90));
+                Uint8List.fromList(img.encodeJpg(baseImg, quality: 85));
             target.addPage(pw.Page(
               pageFormat: PdfPageFormat(page.width, page.height),
               margin: pw.EdgeInsets.zero,

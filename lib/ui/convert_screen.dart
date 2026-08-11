@@ -65,6 +65,7 @@ class _ConvertScreenState extends State<ConvertScreen> {
     final picked = await FilePickerService.pickMultipleFiles(
       allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'],
     );
+    if (!mounted) return;
     if (picked != null && picked.isNotEmpty) {
       setState(() => _images.addAll(picked));
     }

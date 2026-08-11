@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:pdf/pdf.dart' hide PdfDocument;
+import 'package:pdf/pdf.dart' hide PdfDocument, PdfPage;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:image/image.dart' as img;
 import 'package:flutter/services.dart';
@@ -13,7 +13,10 @@ import 'package:quick_pdf/utils/path_utils.dart';
 import 'pdf_processor.dart';
 
 class PDFManager {
-  /// Converts images to PDF — pure Dart, safe to run in the processor isolate.
+  /// Converts images to PDF in a background isolate.
+  ///
+  /// Only file paths are sent to the worker so the UI isolate never holds
+  /// every image's raw bytes at once (prevents OOM / process kills).
   static Future<File> convertImagesToPDF(
     List<File> images, {
     String pageSize = 'A4',
@@ -22,15 +25,20 @@ class PDFManager {
     double margin = 20.0,
     String? outputName,
   }) async {
-    final List<List<int>> imageBytesList = [];
+    if (images.isEmpty) {
+      throw ArgumentError('No images to convert');
+    }
     for (final imageFile in images) {
-      imageBytesList.add(await imageFile.readAsBytes());
+      if (!await imageFile.exists()) {
+        throw Exception('Image not found: ${imageFile.path}');
+      }
     }
 
+    final paths = images.map((f) => f.path).toList(growable: false);
     final isolate = await PdfProcessorIsolate.spawn();
     try {
       final pdfBytes = await isolate.convertImagesToPDF(
-        imageBytesList,
+        paths,
         pageSize: pageSize,
         landscape: landscape,
         quality: quality,
@@ -46,6 +54,29 @@ class PDFManager {
       return pdfFile;
     } finally {
       await isolate.kill();
+    }
+  }
+
+  /// Renders a PDF page to an [img.Image], copying pixels and releasing the
+  /// native `PdfPageImage` buffer immediately (required to avoid OOM).
+  static Future<img.Image> _renderPageImage(
+    PdfPage page, {
+    int? width,
+    int? height,
+  }) async {
+    final pageImage = await page.render(width: width, height: height);
+    try {
+      final pixels = Uint8List.fromList(pageImage.pixels);
+      return img.Image.fromBytes(
+        width: pageImage.width,
+        height: pageImage.height,
+        bytes: pixels.buffer,
+        format: img.Format.uint8,
+        numChannels: 4,
+        order: img.ChannelOrder.rgba,
+      );
+    } finally {
+      pageImage.dispose();
     }
   }
 
@@ -142,21 +173,14 @@ class PDFManager {
         onProgress?.call(i, pageCount);
 
         final page = await source.getPage(i);
-        final int rw = (page.width * renderScale).round();
-        final int rh = (page.height * renderScale).round();
-        final pageImage = await page.render(width: rw, height: rh);
+        final int rw = (page.width * renderScale).round().clamp(72, 2000);
+        final int rh = (page.height * renderScale).round().clamp(72, 2000);
+        final image =
+            await _renderPageImage(page, width: rw, height: rh);
 
         // Yield so Flutter can process redraws between pages.
         await Future.delayed(Duration.zero);
 
-        final image = img.Image.fromBytes(
-          width: pageImage.width,
-          height: pageImage.height,
-          bytes: pageImage.pixels.buffer,
-          format: img.Format.uint8,
-          numChannels: 4,
-          order: img.ChannelOrder.rgba,
-        );
         final encoded =
             Uint8List.fromList(img.encodeJpg(image, quality: imageQuality));
 
@@ -348,21 +372,14 @@ class PDFManager {
       for (int i = 1; i <= pageCount; i++) {
         onProgress?.call(i, pageCount);
         final page = await source.getPage(i);
-        final pageImage = await page.render(
-          width: (page.width * 2).round(),
-          height: (page.height * 2).round(),
+        final image = await _renderPageImage(
+          page,
+          width: (page.width * 1.5).round().clamp(72, 1600),
+          height: (page.height * 1.5).round().clamp(72, 1600),
         );
         await Future.delayed(Duration.zero);
 
-        final image = img.Image.fromBytes(
-          width: pageImage.width,
-          height: pageImage.height,
-          bytes: pageImage.pixels.buffer,
-          format: img.Format.uint8,
-          numChannels: 4,
-          order: img.ChannelOrder.rgba,
-        );
-        final encoded = Uint8List.fromList(img.encodeJpg(image, quality: 90));
+        final encoded = Uint8List.fromList(img.encodeJpg(image, quality: 85));
 
         target.addPage(pw.Page(
           pageFormat: PdfPageFormat(page.width, page.height),
@@ -424,20 +441,12 @@ class PDFManager {
         if (pageNum < 1 || pageNum > source.pageCount) continue;
 
         final page = await source.getPage(pageNum);
-        final pageImage = await page.render(
-          width: (page.width * 2).round(),
-          height: (page.height * 2).round(),
+        final image = await _renderPageImage(
+          page,
+          width: (page.width * 1.5).round().clamp(72, 1600),
+          height: (page.height * 1.5).round().clamp(72, 1600),
         );
         await Future.delayed(Duration.zero);
-
-        final image = img.Image.fromBytes(
-          width: pageImage.width,
-          height: pageImage.height,
-          bytes: pageImage.pixels.buffer,
-          format: img.Format.uint8,
-          numChannels: 4,
-          order: img.ChannelOrder.rgba,
-        );
 
         final rawRotation =
             (rotations != null && i < rotations.length) ? rotations[i] : 0;
@@ -447,7 +456,7 @@ class PDFManager {
             : img.copyRotate(image, angle: rotation.toDouble());
 
         final encoded =
-            Uint8List.fromList(img.encodeJpg(outputImage, quality: 90));
+            Uint8List.fromList(img.encodeJpg(outputImage, quality: 85));
         final pageWidth =
             rotation % 180 == 0 ? page.width : page.height;
         final pageHeight =
@@ -511,19 +520,27 @@ class PDFManager {
 
       if (ext == 'pdf') {
         final doc = await PdfDocument.openFile(path);
-        final page = await doc.getPage(1);
-        final rendered = await page.render(width: 200);
-        final uiImage = await rendered.createImageIfNotAvailable();
-        final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
-        uiImage.dispose();
-        await doc.dispose();
-        if (bd != null) {
-          await thumbFile.writeAsBytes(bd.buffer.asUint8List());
-          return thumbPath;
+        try {
+          final page = await doc.getPage(1);
+          final rendered = await page.render(width: 200);
+          try {
+            final uiImage = await rendered.createImageIfNotAvailable();
+            final bd =
+                await uiImage.toByteData(format: ui.ImageByteFormat.png);
+            uiImage.dispose();
+            if (bd != null) {
+              await thumbFile.writeAsBytes(bd.buffer.asUint8List());
+              return thumbPath;
+            }
+          } finally {
+            rendered.dispose();
+          }
+        } finally {
+          await doc.dispose();
         }
       } else if (['jpg', 'jpeg', 'png', 'bmp', 'webp'].contains(ext)) {
         final bytes = await sourceFile.readAsBytes();
-        final original = img.decodeImage(Uint8List.fromList(bytes));
+        final original = img.decodeImage(bytes);
         if (original != null) {
           final thumb = img.copyResize(original, width: 200);
           await thumbFile.writeAsBytes(img.encodePng(thumb));

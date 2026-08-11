@@ -30,33 +30,44 @@ class _PageManagerScreenState extends State<PageManagerScreen> {
   }
 
   Future<void> _loadPages() async {
+    render.PdfDocument? doc;
     try {
-      final doc =
-          await render.PdfDocument.openFile(widget.pdfFile.path);
+      doc = await render.PdfDocument.openFile(widget.pdfFile.path);
+      if (!mounted) {
+        await doc.dispose();
+        return;
+      }
       final count = doc.pageCount;
       final items = <_PageItem>[];
 
       for (int i = 1; i <= count; i++) {
         items.add(_PageItem(pageNumber: i));
       }
-      setState(() { _pages = items; _loading = false; });
+      setState(() {
+        _pages = items;
+        _loading = false;
+      });
 
       // Load thumbnails async
       for (int i = 0; i < items.length; i++) {
+        if (!mounted) break;
         try {
           final page = await doc.getPage(items[i].pageNumber);
           final rendered = await page.render(width: 120);
-          final uiImage = await rendered.createImageIfNotAvailable();
-          final bd =
-              await uiImage.toByteData(format: ui.ImageByteFormat.png);
-          uiImage.dispose();
-          if (mounted && bd != null) {
-            setState(() => _pages[i].thumb = bd.buffer.asUint8List());
+          try {
+            final uiImage = await rendered.createImageIfNotAvailable();
+            final bd =
+                await uiImage.toByteData(format: ui.ImageByteFormat.png);
+            uiImage.dispose();
+            if (mounted && bd != null && i < _pages.length) {
+              setState(() => _pages[i].thumb = bd.buffer.asUint8List());
+            }
+          } finally {
+            rendered.dispose();
           }
         } catch (_) {}
         await Future.delayed(Duration.zero);
       }
-      await doc.dispose();
     } catch (e) {
       if (mounted) {
         setState(() => _loading = false);
@@ -66,6 +77,10 @@ class _PageManagerScreenState extends State<PageManagerScreen> {
               behavior: SnackBarBehavior.floating),
         );
       }
+    } finally {
+      try {
+        await doc?.dispose();
+      } catch (_) {}
     }
   }
 

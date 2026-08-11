@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:pdf/pdf.dart' as pdf;
@@ -30,6 +31,7 @@ void pdfProcessorEntryPoint(SendPort sendPort) {
   receivePort.listen((dynamic message) async {
     if (message == 'KILL') {
       receivePort.close();
+      Isolate.current.kill(priority: Isolate.immediate);
       return;
     }
     if (message is PdfProcessorMessage) {
@@ -38,7 +40,7 @@ void pdfProcessorEntryPoint(SendPort sendPort) {
         switch (message.data['type']) {
           case 'convertImagesToPDF':
             result = await _convertImagesToPDFIsolate(
-              message.data['images'],
+              (message.data['paths'] as List).cast<String>(),
               pageSize: message.data['pageSize'] as String? ?? 'A4',
               landscape: message.data['landscape'] as bool? ?? false,
               quality: message.data['quality'] as int? ?? 85,
@@ -48,11 +50,11 @@ void pdfProcessorEntryPoint(SendPort sendPort) {
           default:
             throw Exception('Unknown processing type: ${message.data['type']}');
         }
-        message.responsePort.send(
-            PdfProcessorResponse(message.id, result, null));
+        message.responsePort
+            .send(PdfProcessorResponse(message.id, result, null));
       } catch (e) {
-        message.responsePort.send(
-            PdfProcessorResponse(message.id, null, e.toString()));
+        message.responsePort
+            .send(PdfProcessorResponse(message.id, null, e.toString()));
       }
     }
   });
@@ -83,7 +85,8 @@ class PdfProcessorIsolate {
 
   static Future<PdfProcessorIsolate> spawn() async {
     final ReceivePort handshake = ReceivePort();
-    final isolate = await Isolate.spawn(pdfProcessorEntryPoint, handshake.sendPort);
+    final isolate =
+        await Isolate.spawn(pdfProcessorEntryPoint, handshake.sendPort);
     final SendPort sendPort = await handshake.first as SendPort;
     handshake.close();
     return PdfProcessorIsolate._internal(sendPort, isolate);
@@ -100,8 +103,9 @@ class PdfProcessorIsolate {
     return completer.future;
   }
 
+  /// Converts images by path so the main isolate never holds all raw bytes.
   Future<List<int>> convertImagesToPDF(
-    List<List<int>> images, {
+    List<String> imagePaths, {
     String pageSize = 'A4',
     bool landscape = false,
     int quality = 85,
@@ -109,7 +113,7 @@ class PdfProcessorIsolate {
   }) async {
     return await _sendMessage({
       'type': 'convertImagesToPDF',
-      'images': images,
+      'paths': imagePaths,
       'pageSize': pageSize,
       'landscape': landscape,
       'quality': quality,
@@ -122,9 +126,12 @@ class PdfProcessorIsolate {
     _killed = true;
     try {
       _sendPort.send('KILL');
-    } catch (_) {}
+    } catch (_) {
+      try {
+        _isolate.kill(priority: Isolate.immediate);
+      } catch (_) {}
+    }
     _receivePort.close();
-    _isolate.kill(priority: Isolate.immediate);
     for (final completer in _completers.values) {
       if (!completer.isCompleted) {
         completer.completeError(StateError('PdfProcessorIsolate killed'));
@@ -134,35 +141,67 @@ class PdfProcessorIsolate {
   }
 }
 
-/// Isolate implementations for PDF processing
-
 pdf.PdfPageFormat _pageFormatFromName(String name) {
   switch (name) {
-    case 'Letter': return pdf.PdfPageFormat.letter;
-    case 'A3':     return pdf.PdfPageFormat.a3;
-    case 'Legal':  return pdf.PdfPageFormat.legal;
-    default:       return pdf.PdfPageFormat.a4;
+    case 'Letter':
+      return pdf.PdfPageFormat.letter;
+    case 'A3':
+      return pdf.PdfPageFormat.a3;
+    case 'Legal':
+      return pdf.PdfPageFormat.legal;
+    default:
+      return pdf.PdfPageFormat.a4;
   }
 }
 
+/// Soft cap so phone photos (12MP+) don't OOM while decoding.
+const int _kMaxDecodeEdge = 2500;
+
 Future<List<int>> _convertImagesToPDFIsolate(
-  List<List<int>> imageBytesList, {
+  List<String> imagePaths, {
   String pageSize = 'A4',
   bool landscape = false,
   int quality = 85,
   double margin = 20.0,
 }) async {
+  if (imagePaths.isEmpty) {
+    throw Exception('No images to convert');
+  }
+
   final target = pw.Document(compress: true);
 
-  for (final rawBytes in imageBytesList) {
-    final img.Image? original = img.decodeImage(Uint8List.fromList(rawBytes));
-    if (original == null) throw Exception('Failed to decode image');
+  for (final path in imagePaths) {
+    final file = File(path);
+    if (!file.existsSync()) {
+      throw Exception('Image not found: $path');
+    }
+
+    // Read + decode one image at a time; release before the next.
+    final Uint8List rawBytes = await file.readAsBytes();
+    img.Image? original = img.decodeImage(rawBytes);
+    if (original == null) {
+      throw Exception('Failed to decode image: $path');
+    }
+
+    // Cap decode size early to avoid multi-megapixel RGBA spikes.
+    final int longest = original.width > original.height
+        ? original.width
+        : original.height;
+    if (longest > _kMaxDecodeEdge) {
+      final scale = _kMaxDecodeEdge / longest;
+      original = img.copyResize(
+        original,
+        width: (original.width * scale).round().clamp(1, _kMaxDecodeEdge),
+        height: (original.height * scale).round().clamp(1, _kMaxDecodeEdge),
+        interpolation: img.Interpolation.linear,
+      );
+    }
 
     final bool isFit = pageSize == 'fit';
 
-    // Determine page format
     late pdf.PdfPageFormat format;
     if (isFit) {
+      // PDF points ≈ CSS px for fit mode; keep page size reasonable.
       format = pdf.PdfPageFormat(
         original.width.toDouble(),
         original.height.toDouble(),
@@ -172,33 +211,34 @@ Future<List<int>> _convertImagesToPDFIsolate(
       if (landscape) format = format.landscape;
     }
 
-    // Available content area (page minus margins)
-    final double availW =
-        isFit ? format.width : format.width - 2 * margin;
-    final double availH =
-        isFit ? format.height : format.height - 2 * margin;
+    final double availW = isFit ? format.width : format.width - 2 * margin;
+    final double availH = isFit ? format.height : format.height - 2 * margin;
+    if (availW <= 0 || availH <= 0) {
+      throw Exception('Margins are too large for the selected page size');
+    }
 
-    // Scale to fit available area, maintaining aspect ratio
     final double scaleX = availW / original.width;
     final double scaleY = availH / original.height;
     final double scale = scaleX < scaleY ? scaleX : scaleY;
     final double displayW = original.width * scale;
     final double displayH = original.height * scale;
 
-    // Downsample source pixels to ~144 DPI equivalent for the display size
-    // (1 PDF point ≈ 2 pixels at 144 DPI — good quality, smaller file)
-    final int targetPx = (displayW * 2).round();
-    final int targetPy = (displayH * 2).round();
+    // ~144 DPI equivalent for the display size.
+    final int targetPx = (displayW * 2).round().clamp(1, _kMaxDecodeEdge);
+    final int targetPy = (displayH * 2).round().clamp(1, _kMaxDecodeEdge);
 
     final img.Image source =
         (original.width > targetPx || original.height > targetPy)
-            ? img.copyResize(original,
-                width: targetPx, height: targetPy,
-                interpolation: img.Interpolation.cubic)
+            ? img.copyResize(
+                original,
+                width: targetPx,
+                height: targetPy,
+                interpolation: img.Interpolation.linear,
+              )
             : original;
 
     final Uint8List encoded =
-        Uint8List.fromList(img.encodeJpg(source, quality: quality));
+        Uint8List.fromList(img.encodeJpg(source, quality: quality.clamp(20, 95)));
 
     target.addPage(
       pw.Page(

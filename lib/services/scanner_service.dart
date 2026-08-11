@@ -78,18 +78,31 @@ class ScannerService {
       return outputPath;
     }
 
-    // B&W mode: convert to grayscale and boost contrast for clean text scans.
+    // B&W mode: downsample first so high-res camera frames don't OOM.
     img.Image? image = img.decodeImage(bytes);
     if (image == null) {
       File(outputPath).writeAsBytesSync(bytes);
       return outputPath;
     }
 
+    const maxEdge = 2200;
+    final longest =
+        image.width > image.height ? image.width : image.height;
+    if (longest > maxEdge) {
+      final scale = maxEdge / longest;
+      image = img.copyResize(
+        image,
+        width: (image.width * scale).round(),
+        height: (image.height * scale).round(),
+        interpolation: img.Interpolation.linear,
+      );
+    }
+
     image = img.grayscale(image);
     image = img.normalize(image, min: 0, max: 255);
     image = img.contrast(image, contrast: 1.9);
 
-    File(outputPath).writeAsBytesSync(img.encodeJpg(image, quality: 92));
+    File(outputPath).writeAsBytesSync(img.encodeJpg(image, quality: 90));
     return outputPath;
   }
 }

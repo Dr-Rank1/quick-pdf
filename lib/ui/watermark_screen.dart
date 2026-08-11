@@ -60,14 +60,21 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
     setState(() => _loadingPreview = true);
     try {
       final doc = await render.PdfDocument.openFile(_file!.path);
-      final page = await doc.getPage(1);
-      final rendered = await page.render(width: 300);
-      final uiImage = await rendered.createImageIfNotAvailable();
-      final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
-      uiImage.dispose();
-      await doc.dispose();
-      if (mounted && bd != null) {
-        setState(() => _previewBytes = bd.buffer.asUint8List());
+      try {
+        final page = await doc.getPage(1);
+        final rendered = await page.render(width: 300);
+        try {
+          final uiImage = await rendered.createImageIfNotAvailable();
+          final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
+          uiImage.dispose();
+          if (mounted && bd != null) {
+            setState(() => _previewBytes = bd.buffer.asUint8List());
+          }
+        } finally {
+          rendered.dispose();
+        }
+      } finally {
+        await doc.dispose();
       }
     } catch (_) {}
     if (mounted) setState(() => _loadingPreview = false);

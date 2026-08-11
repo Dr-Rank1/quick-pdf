@@ -198,8 +198,9 @@ class AdService {
       }
     }
 
+    StartAppRewardedVideoAd? ad;
     try {
-      final ad = await _sdk.loadRewardedVideoAd(
+      ad = await _sdk.loadRewardedVideoAd(
         onVideoCompleted: () {
           // Kick off grant; callers await [grantDone] below.
           unawaited(grantOnce());
@@ -208,16 +209,28 @@ class AdService {
           // Closed early or after completion — grant at most once.
           unawaited(grantOnce());
           onDismissed?.call();
+          try {
+            ad?.dispose();
+          } catch (_) {}
+          ad = null;
         },
         onAdNotDisplayed: () {
           debugPrint('AdService: rewarded not displayed. Falling back.');
           unawaited(grantOnce());
+          try {
+            ad?.dispose();
+          } catch (_) {}
+          ad = null;
         },
       );
 
-      final shown = await ad.show();
+      final shown = await ad!.show();
       if (!shown) {
         await grantOnce();
+        try {
+          ad?.dispose();
+        } catch (_) {}
+        ad = null;
       } else {
         try {
           await grantDone.future.timeout(const Duration(minutes: 3));
@@ -225,10 +238,17 @@ class AdService {
           // SDK never delivered completion/hidden callbacks — still unlock.
           await grantOnce();
         }
+        // Prefer dispose from onAdHidden; fall back if still alive.
+        try {
+          ad?.dispose();
+        } catch (_) {}
+        ad = null;
       }
-      ad.dispose();
     } catch (e) {
       debugPrint('AdService: rewarded load/show failed — $e. Falling back.');
+      try {
+        ad?.dispose();
+      } catch (_) {}
       if (!grantStarted) {
         await grantOnce();
       } else {

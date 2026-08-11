@@ -91,20 +91,27 @@ class OcrService {
         onProgress?.call(i, total);
 
         final page = await pdfDoc.getPage(i);
+        // Cap render size to keep OCR from OOM-killing the process.
         final int renderWidth =
-            (page.width * 1.5).round().clamp(1200, 1800);
+            (page.width * 1.25).round().clamp(800, 1400);
         final pageImage = await page.render(width: renderWidth);
+        late final Uint8List pngBytes;
+        try {
+          final pixels = Uint8List.fromList(pageImage.pixels);
+          final rawImg = img.Image.fromBytes(
+            width: pageImage.width,
+            height: pageImage.height,
+            bytes: pixels.buffer,
+            format: img.Format.uint8,
+            numChannels: 4,
+            order: img.ChannelOrder.rgba,
+          );
+          pngBytes = Uint8List.fromList(img.encodeJpg(rawImg, quality: 90));
+        } finally {
+          pageImage.dispose();
+        }
 
-        final rawImg = img.Image.fromBytes(
-          width: pageImage.width,
-          height: pageImage.height,
-          bytes: pageImage.pixels.buffer,
-          format: img.Format.uint8,
-          numChannels: 4,
-          order: img.ChannelOrder.rgba,
-        );
-        final pngBytes = Uint8List.fromList(img.encodePng(rawImg));
-        final tmpFile = File('${tmp.path}/ocr_p$i.png');
+        final tmpFile = File('${tmp.path}/ocr_p$i.jpg');
         await tmpFile.writeAsBytes(pngBytes);
 
         final InputImage input = InputImage.fromFilePath(tmpFile.path);
@@ -118,6 +125,7 @@ class OcrService {
         try {
           await tmpFile.delete();
         } catch (_) {}
+        await Future<void>.delayed(Duration.zero);
       }
     } finally {
       await pdfDoc.dispose();

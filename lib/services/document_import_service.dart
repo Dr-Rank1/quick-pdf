@@ -4,14 +4,11 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
-import 'package:quick_pdf/services/ocr_service.dart';
 
 /// Shared on-device import for file picker and desktop drag-and-drop.
 class DocumentImportService {
   DocumentImportService._();
   static final DocumentImportService instance = DocumentImportService._();
-
-  final OcrService _ocrService = OcrService();
 
   static const _pdfExtensions = {'pdf'};
   static const _imageExtensions = {'jpg', 'jpeg', 'png', 'bmp', 'webp'};
@@ -21,6 +18,9 @@ class DocumentImportService {
     return _pdfExtensions.contains(ext) || _imageExtensions.contains(ext);
   }
 
+  /// Copies files into app documents and indexes them.
+  /// OCR is intentionally deferred (run from the OCR tool) so import cannot
+  /// ANR/OOM the app on large multi-page PDFs.
   Future<int> importPaths(
     List<String> paths, {
     void Function(int completed, int total)? onProgress,
@@ -31,7 +31,6 @@ class DocumentImportService {
         .toList();
     if (files.isEmpty) return 0;
 
-    // Copy into app documents so library entries survive cache/Downloads cleanup.
     final appDir = await getApplicationDocumentsDirectory();
     final importDir = Directory('${appDir.path}/imports');
     if (!await importDir.exists()) {
@@ -48,19 +47,17 @@ class DocumentImportService {
       );
       await file.copy(dest.path);
 
-      final pages = await _ocrService.extractText(dest);
-      final textContent =
-          pages.isNotEmpty ? pages.map((page) => page.text).join('\n\n') : null;
       final thumbPath = await PDFManager.generateThumbnail(dest.path);
       await db.insertDocument(
         dest.path,
-        textContent: textContent,
         thumbnailPath: thumbPath,
       );
       onProgress?.call(i + 1, total);
+      // Yield so the UI can paint between files.
+      await Future<void>.delayed(Duration.zero);
     }
     return files.length;
   }
 
-  void dispose() => _ocrService.dispose();
+  void dispose() {}
 }

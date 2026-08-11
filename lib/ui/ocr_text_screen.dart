@@ -166,7 +166,9 @@ class _OcrTextScreenState extends State<OcrTextScreen> {
     if (_isEditing && _editedTexts.isNotEmpty) {
       _editController.text = _editedTexts[index];
     }
-    _scrollController.jumpTo(0);
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(0);
+    }
   }
 
   // ─── Edit mode ───────────────────────────────────────────────────────────

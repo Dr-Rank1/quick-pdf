@@ -65,19 +65,27 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
     _thumbsLoading = true;
     try {
       final doc = await render.PdfDocument.openFile(widget.pdfPath);
-      for (int i = 1; i <= _totalPages; i++) {
-        final page = await doc.getPage(i);
-        final rendered = await page.render(width: 80);
-        final uiImage = await rendered.createImageIfNotAvailable();
-        final bd =
-            await uiImage.toByteData(format: ui.ImageByteFormat.png);
-        uiImage.dispose();
-        if (bd != null && mounted) {
-          setState(() => _thumbs[i] = bd.buffer.asUint8List());
+      try {
+        for (int i = 1; i <= _totalPages; i++) {
+          if (!mounted) break;
+          final page = await doc.getPage(i);
+          final rendered = await page.render(width: 80);
+          try {
+            final uiImage = await rendered.createImageIfNotAvailable();
+            final bd =
+                await uiImage.toByteData(format: ui.ImageByteFormat.png);
+            uiImage.dispose();
+            if (bd != null && mounted) {
+              setState(() => _thumbs[i] = bd.buffer.asUint8List());
+            }
+          } finally {
+            rendered.dispose();
+          }
+          await Future.delayed(Duration.zero);
         }
-        await Future.delayed(Duration.zero);
+      } finally {
+        await doc.dispose();
       }
-      await doc.dispose();
     } catch (_) {}
     _thumbsLoading = false;
   }

@@ -179,24 +179,30 @@ class _PdfExportScreenState extends State<PdfExportScreen> {
         if (mounted) setState(() { _progressPage = i; _progressTotal = total; });
 
         final page = await doc.getPage(i);
-        final rw = (page.width * 2).round();
-        final rh = (page.height * 2).round();
+        final rw = (page.width * 1.5).round().clamp(72, 1600);
+        final rh = (page.height * 1.5).round().clamp(72, 1600);
         final rendered = await page.render(width: rw, height: rh);
 
+        late final Uint8List encoded;
+        try {
+          final pixels = Uint8List.fromList(rendered.pixels);
+          final rawImg = img.Image.fromBytes(
+            width: rendered.width,
+            height: rendered.height,
+            bytes: pixels.buffer,
+            format: img.Format.uint8,
+            numChannels: 4,
+            order: img.ChannelOrder.rgba,
+          );
+
+          encoded = widget.format == 'png'
+              ? Uint8List.fromList(img.encodePng(rawImg))
+              : Uint8List.fromList(img.encodeJpg(rawImg, quality: _quality));
+        } finally {
+          rendered.dispose();
+        }
+
         await Future.delayed(Duration.zero);
-
-        final rawImg = img.Image.fromBytes(
-          width: rendered.width,
-          height: rendered.height,
-          bytes: rendered.pixels.buffer,
-          format: img.Format.uint8,
-          numChannels: 4,
-          order: img.ChannelOrder.rgba,
-        );
-
-        final Uint8List encoded = widget.format == 'png'
-            ? Uint8List.fromList(img.encodePng(rawImg))
-            : Uint8List.fromList(img.encodeJpg(rawImg, quality: _quality));
 
         final pageStr = i.toString().padLeft(total.toString().length, '0');
         final outPath = '${dir.path}/${base}_p$pageStr.${widget.format}';

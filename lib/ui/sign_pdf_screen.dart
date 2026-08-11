@@ -57,7 +57,8 @@ class _SignPdfScreenState extends State<SignPdfScreen> {
       final dir = await getApplicationDocumentsDirectory();
       final file = File('${dir.path}/$_savedSigFilename');
       if (await file.exists()) {
-        setState(() => _savedSig = file.readAsBytesSync());
+        final bytes = await file.readAsBytes();
+        if (mounted) setState(() => _savedSig = bytes);
       }
     } catch (_) {}
   }
@@ -66,19 +67,20 @@ class _SignPdfScreenState extends State<SignPdfScreen> {
     try {
       final dir = await getApplicationDocumentsDirectory();
       await File('${dir.path}/$_savedSigFilename').writeAsBytes(bytes);
-      setState(() => _savedSig = bytes);
+      if (mounted) setState(() => _savedSig = bytes);
     } catch (_) {}
   }
 
   Future<void> _pickPdf() async {
     final files = await FilePickerService.pickMultipleFiles(
         allowedExtensions: ['pdf']);
-    if (files == null || files.isEmpty) return;
+    if (files == null || files.isEmpty || !mounted) return;
     setState(() {
       _pdfFile = files.first;
       _pagePreviewBytes = null;
     });
     final count = await PDFManager.getPageCount(_pdfFile!.path);
+    if (!mounted) return;
     setState(() {
       _pdfPageCount = count;
       _targetPage = 1;
@@ -91,15 +93,22 @@ class _SignPdfScreenState extends State<SignPdfScreen> {
     setState(() => _loadingPreview = true);
     try {
       final doc = await render.PdfDocument.openFile(_pdfFile!.path);
-      final page = await doc.getPage(_targetPage);
-      final rendered = await page.render(width: 400);
-      final uiImage = await rendered.createImageIfNotAvailable();
-      final bd =
-          await uiImage.toByteData(format: ui.ImageByteFormat.png);
-      uiImage.dispose();
-      await doc.dispose();
-      if (mounted && bd != null) {
-        setState(() => _pagePreviewBytes = bd.buffer.asUint8List());
+      try {
+        final page = await doc.getPage(_targetPage);
+        final rendered = await page.render(width: 400);
+        try {
+          final uiImage = await rendered.createImageIfNotAvailable();
+          final bd =
+              await uiImage.toByteData(format: ui.ImageByteFormat.png);
+          uiImage.dispose();
+          if (mounted && bd != null) {
+            setState(() => _pagePreviewBytes = bd.buffer.asUint8List());
+          }
+        } finally {
+          rendered.dispose();
+        }
+      } finally {
+        await doc.dispose();
       }
     } catch (_) {}
     if (mounted) setState(() => _loadingPreview = false);
@@ -162,61 +171,68 @@ class _SignPdfScreenState extends State<SignPdfScreen> {
   }
 
   Future<void> _doApplySig(File pdfFile, Uint8List sigBytes) async {
-    setState(() => _isSaving = true);
+    if (mounted) setState(() => _isSaving = true);
     try {
       final Uint8List pdfBytes = await pdfFile.readAsBytes();
       final source = await render.PdfDocument.openData(pdfBytes);
       final target = pw.Document(compress: true);
 
-      for (int i = 1; i <= source.pageCount; i++) {
-        final page = await source.getPage(i);
-        final pageImage = await page.render(
-          width: (page.width * 2).round(),
-          height: (page.height * 2).round(),
-        );
-        await Future.delayed(Duration.zero);
-
-        final image = img.Image.fromBytes(
-          width: pageImage.width,
-          height: pageImage.height,
-          bytes: pageImage.pixels.buffer,
-          format: img.Format.uint8,
-          numChannels: 4,
-          order: img.ChannelOrder.rgba,
-        );
-        final encoded =
-            Uint8List.fromList(img.encodeJpg(image, quality: 90));
-
-        target.addPage(pw.Page(
-          pageFormat: PdfPageFormat(page.width, page.height),
-          margin: pw.EdgeInsets.zero,
-          build: (_) {
-            // Match placement preview: position is the center of the signature
-            // in top-left Flutter / pdf package coordinates (no Y flip).
-            final sigW = page.width * _sigScale;
-            final sigH = sigW * 0.5;
-            final sigX = page.width * _sigPosition.dx - sigW / 2;
-            final sigY = page.height * _sigPosition.dy - sigH / 2;
-            return pw.Stack(
-              children: [
-                pw.Image(pw.MemoryImage(encoded)),
-                if (i == _targetPage)
-                  pw.Positioned(
-                    left: sigX,
-                    top: sigY,
-                    child: pw.SizedBox(
-                      width: sigW,
-                      height: sigH,
-                      child: pw.Image(pw.MemoryImage(sigBytes)),
-                    ),
-                  ),
-              ],
+      try {
+        for (int i = 1; i <= source.pageCount; i++) {
+          final page = await source.getPage(i);
+          final pageImage = await page.render(
+            width: (page.width * 1.5).round().clamp(72, 1600),
+            height: (page.height * 1.5).round().clamp(72, 1600),
+          );
+          late final Uint8List encoded;
+          try {
+            final pixels = Uint8List.fromList(pageImage.pixels);
+            final image = img.Image.fromBytes(
+              width: pageImage.width,
+              height: pageImage.height,
+              bytes: pixels.buffer,
+              format: img.Format.uint8,
+              numChannels: 4,
+              order: img.ChannelOrder.rgba,
             );
-          },
-        ));
-        await Future.delayed(Duration.zero);
+            encoded = Uint8List.fromList(img.encodeJpg(image, quality: 85));
+          } finally {
+            pageImage.dispose();
+          }
+          await Future.delayed(Duration.zero);
+
+          target.addPage(pw.Page(
+            pageFormat: PdfPageFormat(page.width, page.height),
+            margin: pw.EdgeInsets.zero,
+            build: (_) {
+              // Match placement preview: position is the center of the signature
+              // in top-left Flutter / pdf package coordinates (no Y flip).
+              final sigW = page.width * _sigScale;
+              final sigH = sigW * 0.5;
+              final sigX = page.width * _sigPosition.dx - sigW / 2;
+              final sigY = page.height * _sigPosition.dy - sigH / 2;
+              return pw.Stack(
+                children: [
+                  pw.Image(pw.MemoryImage(encoded)),
+                  if (i == _targetPage)
+                    pw.Positioned(
+                      left: sigX,
+                      top: sigY,
+                      child: pw.SizedBox(
+                        width: sigW,
+                        height: sigH,
+                        child: pw.Image(pw.MemoryImage(sigBytes)),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ));
+          await Future.delayed(Duration.zero);
+        }
+      } finally {
+        await source.dispose();
       }
-      await source.dispose();
 
       final dir = await getApplicationDocumentsDirectory();
       final out = File(

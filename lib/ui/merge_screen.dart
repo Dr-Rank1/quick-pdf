@@ -106,16 +106,22 @@ class _MergeScreenState extends State<MergeScreen> {
       final doc = await PdfDocument.openFile(item.file.path);
       final page = await doc.getPage(1);
       final rendered = await page.render(width: 120, height: 160);
-      final uiImage = await rendered.createImageIfNotAvailable();
-      final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
-      uiImage.dispose();
+      Uint8List? thumbBytes;
+      try {
+        final uiImage = await rendered.createImageIfNotAvailable();
+        final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
+        uiImage.dispose();
+        thumbBytes = bd?.buffer.asUint8List();
+      } finally {
+        rendered.dispose();
+      }
       final int count = doc.pageCount;
       await doc.dispose();
 
       if (mounted) {
         setState(() {
           item.pageCount = count;
-          item.thumbnail = bd?.buffer.asUint8List();
+          item.thumbnail = thumbBytes;
         });
       }
     } catch (_) {
@@ -573,12 +579,16 @@ class _PagePickerSheetState extends State<_PagePickerSheet> {
         if (!mounted) break;
         final page = await doc.getPage(i);
         final rendered = await page.render(width: 110);
-        final uiImage = await rendered.createImageIfNotAvailable();
-        final bd =
-            await uiImage.toByteData(format: ui.ImageByteFormat.png);
-        uiImage.dispose();
-        if (mounted) {
-          setState(() => _thumbs[i] = bd?.buffer.asUint8List());
+        try {
+          final uiImage = await rendered.createImageIfNotAvailable();
+          final bd =
+              await uiImage.toByteData(format: ui.ImageByteFormat.png);
+          uiImage.dispose();
+          if (mounted) {
+            setState(() => _thumbs[i] = bd?.buffer.asUint8List());
+          }
+        } finally {
+          rendered.dispose();
         }
       }
       await doc.dispose();

@@ -90,14 +90,16 @@ GoRouter createAppRouter({required bool showOnboarding}) {
       GoRoute(
         path: AppRoutes.convert,
         builder: (context, state) {
-          final images = state.extra as List<File>? ?? const [];
+          final extra = state.extra;
+          final images = extra is List<File> ? extra : const <File>[];
           return ConvertScreen(initialImages: images);
         },
       ),
       GoRoute(
         path: AppRoutes.merge,
         builder: (context, state) {
-          final files = state.extra as List<File>? ?? const [];
+          final extra = state.extra;
+          final files = extra is List<File> ? extra : const <File>[];
           return MergeScreen(initialFiles: files);
         },
       ),
