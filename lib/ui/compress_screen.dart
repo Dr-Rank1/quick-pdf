@@ -155,6 +155,7 @@ class _CompressScreenState extends State<CompressScreen> {
       final rendered = await page.render(width: 140, height: 180);
       final uiImage = await rendered.createImageIfNotAvailable();
       final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
+      uiImage.dispose();
       final count = doc.pageCount;
       await doc.dispose();
       if (mounted) {

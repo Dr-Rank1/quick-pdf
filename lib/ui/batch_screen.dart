@@ -59,50 +59,52 @@ class _BatchScreenState extends State<BatchScreen> {
       _snack('Add files first.');
       return;
     }
+    if (_running) return;
 
-    Future<void> doRun() async {
-      setState(() => _running = true);
-      final db = DocumentDatabase();
-      for (int i = 0; i < _items.length; i++) {
-        if (!mounted) break;
-        setState(() => _items[i].status = _ItemStatus.processing);
-        try {
-          File out;
-          switch (_op) {
-            case _BatchOp.compress:
-              out = await PDFManager.compressPDF(
-                  _items[i].file, imageQuality: _quality);
-              break;
-            case _BatchOp.watermark:
-              out = await PDFManager.addWatermark(
-                _items[i].file,
-                text: _watermarkCtrl.text.trim().isEmpty
-                    ? 'DRAFT'
-                    : _watermarkCtrl.text.trim(),
-                opacity: 0.25,
-              );
-              break;
-          }
-          final thumbPath = await PDFManager.generateThumbnail(out.path);
-          await db.insertDocument(out.path, thumbnailPath: thumbPath);
-          if (mounted) setState(() => _items[i].status = _ItemStatus.done);
-        } catch (e) {
-          if (mounted) {
-            setState(() {
-              _items[i].status = _ItemStatus.error;
-              _items[i].error = e.toString();
-            });
+    setState(() => _running = true);
+    try {
+      await AdService().showRewardedOrFallback(onRewarded: () async {
+        final db = DocumentDatabase();
+        for (int i = 0; i < _items.length; i++) {
+          if (!mounted) break;
+          setState(() => _items[i].status = _ItemStatus.processing);
+          try {
+            File out;
+            switch (_op) {
+              case _BatchOp.compress:
+                out = await PDFManager.compressPDF(
+                    _items[i].file, imageQuality: _quality);
+                break;
+              case _BatchOp.watermark:
+                out = await PDFManager.addWatermark(
+                  _items[i].file,
+                  text: _watermarkCtrl.text.trim().isEmpty
+                      ? 'DRAFT'
+                      : _watermarkCtrl.text.trim(),
+                  opacity: 0.25,
+                );
+                break;
+            }
+            final thumbPath = await PDFManager.generateThumbnail(out.path);
+            await db.insertDocument(out.path, thumbnailPath: thumbPath);
+            if (mounted) setState(() => _items[i].status = _ItemStatus.done);
+          } catch (e) {
+            if (mounted) {
+              setState(() {
+                _items[i].status = _ItemStatus.error;
+                _items[i].error = e.toString();
+              });
+            }
           }
         }
-      }
-      if (mounted) {
-        setState(() => _running = false);
-        await AdService().recordToolCompletion();
-        _snack('Batch complete');
-      }
+        if (mounted) {
+          await AdService().recordToolCompletion();
+          _snack('Batch complete');
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _running = false);
     }
-
-    await AdService().showRewardedOrFallback(onRewarded: doRun);
   }
 
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(

@@ -8,13 +8,19 @@ void main() {
   group('AdService frequency capping', () {
     late AdService ad;
 
-    setUp(() {
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({
+        'ads_enabled': true,
+        'premium_until_timestamp': 0,
+        AdService.completionPrefKey: 0,
+      });
+      await AdService.loadPreferences();
       ad = AdService();
       ad.interstitialShowCount = 0;
       ad.forceInterstitialReady = true;
     });
 
-    test('shouldShowAds is always true', () {
+    test('shouldShowAds is true when ads enabled and no premium', () {
       expect(AdService.shouldShowAds, isTrue);
     });
 
@@ -28,6 +34,7 @@ void main() {
 
     test('recordToolCompletion shows interstitial on 3rd completion', () async {
       SharedPreferences.setMockInitialValues({});
+      await AdService.loadPreferences();
 
       await ad.recordToolCompletion();
       expect(ad.interstitialShowCount, 0);

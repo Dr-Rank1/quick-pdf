@@ -56,7 +56,6 @@ class _ConvertScreenState extends State<ConvertScreen> {
 
   void _onReorder(int oldIndex, int newIndex) {
     setState(() {
-      if (newIndex > oldIndex) newIndex--;
       final item = _images.removeAt(oldIndex);
       _images.insert(newIndex, item);
     });
@@ -164,7 +163,7 @@ class _ConvertScreenState extends State<ConvertScreen> {
               SliverToBoxAdapter(child: _buildImageListHeader()),
               SliverReorderableList(
                 itemCount: _images.length,
-                onReorder: _onReorder,
+                onReorderItem: _onReorder,
                 itemBuilder: (_, i) => _buildImageTile(i),
               ),
               const SliverToBoxAdapter(child: SizedBox(height: 8)),

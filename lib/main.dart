@@ -18,6 +18,7 @@ Future<void> main() async {
   final prefs = await SharedPreferences.getInstance();
   final hasSeenOnboarding =
       prefs.getBool(kPrefHasSeenOnboarding) ?? false;
+  final initialTheme = themeModeFromPrefs(prefs);
 
   await AdService.loadPreferences();
   // Warm Start.io before the first frame so the banner doesn't race test-mode.
@@ -32,6 +33,9 @@ Future<void> main() async {
   final router = createAppRouter(showOnboarding: !hasSeenOnboarding);
 
   runApp(ProviderScope(
+    overrides: [
+      themeProvider.overrideWith((ref) => ThemeNotifier(initialTheme)),
+    ],
     child: QuickPDFApp(router: router),
   ));
 

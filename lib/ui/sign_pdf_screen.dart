@@ -191,10 +191,12 @@ class _SignPdfScreenState extends State<SignPdfScreen> {
           pageFormat: PdfPageFormat(page.width, page.height),
           margin: pw.EdgeInsets.zero,
           build: (_) {
+            // Match placement preview: position is the center of the signature
+            // in top-left Flutter / pdf package coordinates (no Y flip).
             final sigW = page.width * _sigScale;
             final sigH = sigW * 0.5;
-            final sigX = page.width * _sigPosition.dx;
-            final sigY = page.height * (1 - _sigPosition.dy);
+            final sigX = page.width * _sigPosition.dx - sigW / 2;
+            final sigY = page.height * _sigPosition.dy - sigH / 2;
             return pw.Stack(
               children: [
                 pw.Image(pw.MemoryImage(encoded)),

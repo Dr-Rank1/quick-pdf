@@ -105,8 +105,9 @@ class _PageManagerScreenState extends State<PageManagerScreen> {
 
   void _rotatePage(int index, bool clockwise) {
     setState(() {
-      _pages[index].rotationDegrees =
-          (_pages[index].rotationDegrees + (clockwise ? 90 : -90)) % 360;
+      final next =
+          _pages[index].rotationDegrees + (clockwise ? 90 : -90);
+      _pages[index].rotationDegrees = ((next % 360) + 360) % 360;
     });
   }
 
@@ -454,7 +455,7 @@ class ReorderableGridView extends StatelessWidget {
     return ReorderableListView.builder(
       padding: padding,
       itemCount: children.length,
-      onReorder: onReorder,
+      onReorderItem: onReorder,
       buildDefaultDragHandles: false,
       itemBuilder: (_, i) => ReorderableDragStartListener(
         key: children[i].key!,

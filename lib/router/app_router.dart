@@ -27,6 +27,23 @@ import 'package:quick_pdf/ui/tools_screen.dart';
 import 'package:quick_pdf/ui/watermark_screen.dart';
 import 'package:quick_pdf/ui/main_nav_page.dart';
 
+Widget _missingExtraScaffold(String title, String message) {
+  return Scaffold(
+    appBar: AppBar(title: Text(title)),
+    body: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(message, textAlign: TextAlign.center),
+      ),
+    ),
+  );
+}
+
+File? _fileExtra(Object? extra) {
+  if (extra is File) return extra;
+  return null;
+}
+
 GoRouter createAppRouter({required bool showOnboarding}) {
   return GoRouter(
     initialLocation:
@@ -87,21 +104,39 @@ GoRouter createAppRouter({required bool showOnboarding}) {
       GoRoute(
         path: AppRoutes.split,
         builder: (context, state) {
-          final file = state.extra! as File;
+          final file = _fileExtra(state.extra);
+          if (file == null) {
+            return _missingExtraScaffold(
+              'Split PDF',
+              'No PDF selected. Go back and choose a file to split.',
+            );
+          }
           return SplitScreen(file: file);
         },
       ),
       GoRoute(
         path: AppRoutes.compress,
         builder: (context, state) {
-          final file = state.extra! as File;
+          final file = _fileExtra(state.extra);
+          if (file == null) {
+            return _missingExtraScaffold(
+              'Compress PDF',
+              'No PDF selected. Go back and choose a file to compress.',
+            );
+          }
           return CompressScreen(file: file);
         },
       ),
       GoRoute(
         path: AppRoutes.ocr,
         builder: (context, state) {
-          final file = state.extra! as File;
+          final file = _fileExtra(state.extra);
+          if (file == null) {
+            return _missingExtraScaffold(
+              'OCR',
+              'No PDF selected. Go back and choose a file for OCR.',
+            );
+          }
           return OcrTextScreen(file: file);
         },
       ),
@@ -112,7 +147,13 @@ GoRouter createAppRouter({required bool showOnboarding}) {
       GoRoute(
         path: AppRoutes.pdfExport,
         builder: (context, state) {
-          final extra = state.extra! as PdfExportExtra;
+          final extra = state.extra;
+          if (extra is! PdfExportExtra) {
+            return _missingExtraScaffold(
+              'Export PDF',
+              'Missing export details. Go back and try again.',
+            );
+          }
           return PdfExportScreen(file: extra.file, format: extra.format);
         },
       ),
@@ -135,7 +176,13 @@ GoRouter createAppRouter({required bool showOnboarding}) {
       GoRoute(
         path: AppRoutes.pageManager,
         builder: (context, state) {
-          final file = state.extra! as File;
+          final file = _fileExtra(state.extra);
+          if (file == null) {
+            return _missingExtraScaffold(
+              'Page Manager',
+              'No PDF selected. Go back and choose a file.',
+            );
+          }
           return PageManagerScreen(pdfFile: file);
         },
       ),
@@ -150,7 +197,13 @@ GoRouter createAppRouter({required bool showOnboarding}) {
       GoRoute(
         path: AppRoutes.editMetadata,
         builder: (context, state) {
-          final file = state.extra! as File;
+          final file = _fileExtra(state.extra);
+          if (file == null) {
+            return _missingExtraScaffold(
+              'Edit Metadata',
+              'No PDF selected. Go back and choose a file.',
+            );
+          }
           return EditMetadataScreen(pdfFile: file);
         },
       ),

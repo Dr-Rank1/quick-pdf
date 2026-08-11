@@ -61,10 +61,12 @@ void pdfProcessorEntryPoint(SendPort sendPort) {
 class PdfProcessorIsolate {
   final ReceivePort _receivePort = ReceivePort();
   final SendPort _sendPort;
+  final Isolate _isolate;
   final Map<int, Completer<dynamic>> _completers = {};
   int _nextRequestId = 0;
+  bool _killed = false;
 
-  PdfProcessorIsolate._internal(this._sendPort) {
+  PdfProcessorIsolate._internal(this._sendPort, this._isolate) {
     _receivePort.listen((dynamic message) {
       if (message is PdfProcessorResponse) {
         final completer = _completers.remove(message.id);
@@ -80,13 +82,17 @@ class PdfProcessorIsolate {
   }
 
   static Future<PdfProcessorIsolate> spawn() async {
-    final ReceivePort port = ReceivePort();
-    await Isolate.spawn(pdfProcessorEntryPoint, port.sendPort);
-    final SendPort sendPort = await port.first as SendPort;
-    return PdfProcessorIsolate._internal(sendPort);
+    final ReceivePort handshake = ReceivePort();
+    final isolate = await Isolate.spawn(pdfProcessorEntryPoint, handshake.sendPort);
+    final SendPort sendPort = await handshake.first as SendPort;
+    handshake.close();
+    return PdfProcessorIsolate._internal(sendPort, isolate);
   }
 
   Future<dynamic> _sendMessage(dynamic data) async {
+    if (_killed) {
+      throw StateError('PdfProcessorIsolate has been killed');
+    }
     final id = _nextRequestId++;
     final completer = Completer<dynamic>();
     _completers[id] = completer;
@@ -112,8 +118,19 @@ class PdfProcessorIsolate {
   }
 
   Future<void> kill() async {
-    _sendPort.send('KILL');
+    if (_killed) return;
+    _killed = true;
+    try {
+      _sendPort.send('KILL');
+    } catch (_) {}
     _receivePort.close();
+    _isolate.kill(priority: Isolate.immediate);
+    for (final completer in _completers.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(StateError('PdfProcessorIsolate killed'));
+      }
+    }
+    _completers.clear();
   }
 }
 
@@ -200,4 +217,3 @@ Future<List<int>> _convertImagesToPDFIsolate(
 
   return await target.save();
 }
-

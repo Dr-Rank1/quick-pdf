@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:quick_pdf/constants/preference_keys.dart';
 import 'package:quick_pdf/ui/compress_screen.dart';
 
 void main() {
@@ -9,6 +11,8 @@ void main() {
   late File pdfFile;
 
   setUp(() async {
+    // Match Balanced preset so Custom slider stays hidden until tapped.
+    SharedPreferences.setMockInitialValues({kPrefImageQuality: 65});
     tmpDir = await Directory.systemTemp.createTemp('qpdf_compress_test_');
     pdfFile = File('${tmpDir.path}/sample.pdf');
     await pdfFile.writeAsString('%PDF-1.4');

@@ -42,16 +42,29 @@ class _ScannerScreenState extends State<ScannerScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-    if (state == AppLifecycleState.inactive) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      final controller = _controller;
+      if (controller == null) return;
+      // Clear before dispose so build never uses a disposed controller.
+      _controller = null;
+      _isInitialized = false;
+      _flashOn = false;
+      if (mounted) setState(() {});
       controller.dispose();
     } else if (state == AppLifecycleState.resumed) {
-      _initCamera();
+      if (_controller == null) {
+        _initCamera();
+      }
     }
   }
 
   Future<void> _initCamera() async {
+    final old = _controller;
+    _controller = null;
+    _isInitialized = false;
+    await old?.dispose();
+
     final camera = await ScannerService.getBackCamera();
     if (camera == null || !mounted) return;
 
@@ -253,7 +266,15 @@ class _ScannerScreenState extends State<ScannerScreen>
           IconButton(
             icon: const Icon(Icons.close, color: Colors.white),
             tooltip: 'Cancel',
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () async {
+              for (final f in List<File>.from(_pages)) {
+                try {
+                  await f.delete();
+                } catch (_) {}
+              }
+              _pages.clear();
+              if (mounted) Navigator.of(context).pop();
+            },
           ),
           const Spacer(),
           if (_pages.isNotEmpty)

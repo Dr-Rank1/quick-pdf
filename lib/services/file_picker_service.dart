@@ -58,14 +58,15 @@ class FilePickerService {
     }
   }
 
-  /// Check if device has enough storage space for estimated bytes
+  /// Best-effort storage check. Flutter has no portable free-space API without
+  /// a plugin, so this only verifies the documents directory is usable and
+  /// never blocks on the old incorrect inode-size heuristic.
   static Future<bool> hasEnoughStorage(int estimatedBytes) async {
     try {
       final Directory appDocDir = await getApplicationDocumentsDirectory();
-      final FileStat stats = await appDocDir.stat();
-      // A buffer is added to the estimated bytes to account for any other files
-      // that may be created by the app.
-      return (stats.size) > estimatedBytes + 1024;
+      if (!await appDocDir.exists()) return false;
+      // estimatedBytes reserved for a future real free-space probe.
+      return estimatedBytes >= 0;
     } catch (e) {
       return false;
     }

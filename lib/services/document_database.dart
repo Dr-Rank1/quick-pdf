@@ -1,7 +1,9 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -109,7 +111,8 @@ class DocumentDatabase {
     }
   }
 
-  /// Removes cached thumbnail PNGs that are orphaned or older than [maxAge].
+  /// Removes cached thumbnail PNGs that are no longer referenced by any document.
+  /// Age alone must not delete thumbs still pointed to by the library.
   Future<void> cleanupStaleThumbnails({
     Duration maxAge = const Duration(days: 30),
   }) async {
@@ -128,8 +131,11 @@ class DocumentDatabase {
         }
         final docPath = row['path'] as String?;
         if (docPath != null) {
-          final key = docPath.hashCode.abs().toString();
+          final key = sha1.convert(utf8.encode(docPath)).toString();
           referenced.add('${thumbDir.path}/thumb_$key.png');
+          // Legacy hashCode keys from older builds.
+          referenced.add(
+              '${thumbDir.path}/thumb_${docPath.hashCode.abs()}.png');
         }
       }
 
@@ -138,14 +144,16 @@ class DocumentDatabase {
         if (entity is! File) continue;
         if (!entity.path.toLowerCase().endsWith('.png')) continue;
 
+        final isOrphan = !referenced.contains(entity.path);
+        if (!isOrphan) continue;
+
+        // Optional: only delete orphans older than maxAge to avoid racing
+        // a thumb that was just written but not yet referenced.
         final stat = await entity.stat();
         final lastUsed = stat.accessed.isAfter(stat.modified)
             ? stat.accessed
             : stat.modified;
-        final isOrphan = !referenced.contains(entity.path);
-        final isStale = lastUsed.isBefore(cutoff);
-
-        if (isOrphan || isStale) {
+        if (lastUsed.isBefore(cutoff)) {
           try {
             await entity.delete();
           } catch (_) {}
@@ -160,18 +168,40 @@ class DocumentDatabase {
       {String? textContent, String? thumbnailPath}) async {
     final db = await database;
     final File file = File(path);
+    final existing = await db.query(
+      'documents',
+      where: 'path = ?',
+      whereArgs: [path],
+      limit: 1,
+    );
+
+    final row = <String, Object?>{
+      'path': path,
+      'name': basename(file.path),
+      'size': await file.length(),
+      'lastOpened': DateTime.now().toIso8601String(),
+    };
+
+    if (existing.isEmpty) {
+      row['text_content'] = textContent;
+      row['thumbnail_path'] = thumbnailPath;
+      row['is_favourite'] = 0;
+      row['dateAdded'] = DateTime.now().toIso8601String();
+    } else {
+      final prev = existing.first;
+      // Preserve favourites and dateAdded on re-import of the same path.
+      row['is_favourite'] = prev['is_favourite'] ?? 0;
+      row['dateAdded'] =
+          prev['dateAdded'] ?? DateTime.now().toIso8601String();
+      row['text_content'] =
+          textContent ?? prev['text_content'];
+      row['thumbnail_path'] =
+          thumbnailPath ?? prev['thumbnail_path'];
+    }
+
     await db.insert(
       'documents',
-      {
-        'path': path,
-        'name': basename(file.path),
-        'size': await file.length(),
-        'text_content': textContent,
-        'thumbnail_path': thumbnailPath,
-        'is_favourite': 0,
-        'dateAdded': DateTime.now().toIso8601String(),
-        'lastOpened': DateTime.now().toIso8601String(),
-      },
+      row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
     _notifyChanged();

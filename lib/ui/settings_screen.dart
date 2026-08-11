@@ -402,11 +402,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 title: const Text('24h Ad-Free Premium'),
                 subtitle: const Text('Watch a short video to remove ads for 24 hours'),
                 trailing: TextButton(
-                  onPressed: () {
-                    AdService().showRewardedOrFallback(onRewarded: () async {
-                      await AdService.activate24hPremium();
-                      if (mounted) setState(() {});
-                    });
+                  onPressed: () async {
+                    await AdService().showRewardedOrFallback(
+                      onRewarded: () async {
+                        await AdService.activate24hPremium();
+                        if (mounted) setState(() {});
+                      },
+                    );
                   },
                   child: const Text('Watch'),
                 ),

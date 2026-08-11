@@ -23,6 +23,7 @@ class _ExportTextScreenState extends State<ExportTextScreen> {
   String _extractedText = '';
   final _textCtrl = TextEditingController();
   final _ocrService = OcrService();
+  Future<void>? _ocrInflight;
 
   @override
   void initState() {
@@ -36,7 +37,12 @@ class _ExportTextScreenState extends State<ExportTextScreen> {
   @override
   void dispose() {
     _textCtrl.dispose();
-    _ocrService.dispose();
+    final pending = _ocrInflight;
+    if (pending != null) {
+      pending.whenComplete(_ocrService.dispose);
+    } else {
+      _ocrService.dispose();
+    }
     super.dispose();
   }
 
@@ -54,6 +60,16 @@ class _ExportTextScreenState extends State<ExportTextScreen> {
 
   Future<void> _extractText() async {
     if (_file == null) return;
+    final op = _extractTextBody();
+    _ocrInflight = op;
+    try {
+      await op;
+    } finally {
+      if (identical(_ocrInflight, op)) _ocrInflight = null;
+    }
+  }
+
+  Future<void> _extractTextBody() async {
     setState(() { _isProcessing = true; _progress = 0; _total = 0; });
     try {
       final pages = await _ocrService.extractText(

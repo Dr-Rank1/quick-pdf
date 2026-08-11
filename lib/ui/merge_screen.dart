@@ -108,6 +108,7 @@ class _MergeScreenState extends State<MergeScreen> {
       final rendered = await page.render(width: 120, height: 160);
       final uiImage = await rendered.createImageIfNotAvailable();
       final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
+      uiImage.dispose();
       final int count = doc.pageCount;
       await doc.dispose();
 
@@ -137,7 +138,6 @@ class _MergeScreenState extends State<MergeScreen> {
 
   void _onReorder(int oldIndex, int newIndex) {
     setState(() {
-      if (newIndex > oldIndex) newIndex--;
       final item = _items.removeAt(oldIndex);
       _items.insert(newIndex, item);
     });
@@ -296,7 +296,7 @@ class _MergeScreenState extends State<MergeScreen> {
             header: _buildListHeader(),
             footer: _buildAddMoreButton(),
             itemCount: _items.length,
-            onReorder: _onReorder,
+            onReorderItem: _onReorder,
             itemBuilder: (_, i) => _buildItemCard(i),
           ),
         ),
@@ -576,6 +576,7 @@ class _PagePickerSheetState extends State<_PagePickerSheet> {
         final uiImage = await rendered.createImageIfNotAvailable();
         final bd =
             await uiImage.toByteData(format: ui.ImageByteFormat.png);
+        uiImage.dispose();
         if (mounted) {
           setState(() => _thumbs[i] = bd?.buffer.asUint8List());
         }

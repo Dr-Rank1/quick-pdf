@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:startapp_sdk/startapp.dart';
@@ -68,7 +70,8 @@ class AdService {
 
   static Future<void> activate24hPremium() async {
     final prefs = await SharedPreferences.getInstance();
-    final until = DateTime.now().add(const Duration(hours: 24)).millisecondsSinceEpoch;
+    final until =
+        DateTime.now().add(const Duration(hours: 24)).millisecondsSinceEpoch;
     await prefs.setInt(_prefPremiumUntil, until);
     _premiumUntil = until;
   }
@@ -168,49 +171,69 @@ class AdService {
 
   // ── Rewarded ads ──────────────────────────────────────────────────────────
 
-  /// Loads and shows a rewarded video, calling [onRewarded] when the video
-  /// completes. Falls back to [onRewarded] immediately if the ad fails so
-  /// the feature is never blocked.
+  /// Loads and shows a rewarded video, then awaits [onRewarded] exactly once.
+  /// Falls back to [onRewarded] if the ad fails so the feature is never blocked.
   Future<void> showRewardedOrFallback({
-    required VoidCallback onRewarded,
+    required Future<void> Function() onRewarded,
     VoidCallback? onDismissed,
   }) async {
     if (!shouldShowAds) {
-      onRewarded();
+      await onRewarded();
       return;
     }
 
     await configureSdk();
-    var rewarded = false;
+
+    var grantStarted = false;
+    final grantDone = Completer<void>();
+
+    Future<void> grantOnce() async {
+      if (grantStarted) return;
+      grantStarted = true;
+      try {
+        await onRewarded();
+        if (!grantDone.isCompleted) grantDone.complete();
+      } catch (e, st) {
+        if (!grantDone.isCompleted) grantDone.completeError(e, st);
+      }
+    }
 
     try {
       final ad = await _sdk.loadRewardedVideoAd(
         onVideoCompleted: () {
-          rewarded = true;
-          onRewarded();
+          // Kick off grant; callers await [grantDone] below.
+          unawaited(grantOnce());
         },
         onAdHidden: () {
-          if (!rewarded) {
-            // User closed early — still fall back so tools are not blocked.
-            onRewarded();
-          }
+          // Closed early or after completion — grant at most once.
+          unawaited(grantOnce());
           onDismissed?.call();
         },
         onAdNotDisplayed: () {
           debugPrint('AdService: rewarded not displayed. Falling back.');
-          onRewarded();
+          unawaited(grantOnce());
         },
       );
 
       final shown = await ad.show();
-      if (!shown && !rewarded) {
-        debugPrint('AdService: rewarded show returned false. Falling back.');
-        onRewarded();
+      if (!shown) {
+        await grantOnce();
+      } else {
+        try {
+          await grantDone.future.timeout(const Duration(minutes: 3));
+        } on TimeoutException {
+          // SDK never delivered completion/hidden callbacks — still unlock.
+          await grantOnce();
+        }
       }
       ad.dispose();
     } catch (e) {
       debugPrint('AdService: rewarded load/show failed — $e. Falling back.');
-      onRewarded();
+      if (!grantStarted) {
+        await grantOnce();
+      } else {
+        await grantDone.future;
+      }
     }
   }
 

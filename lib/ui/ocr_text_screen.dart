@@ -42,6 +42,7 @@ class _OcrTextScreenState extends State<OcrTextScreen> {
   final TextEditingController _editController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  Future<void>? _ocrInflight;
 
   // Computed
   int get _totalWords =>
@@ -70,16 +71,32 @@ class _OcrTextScreenState extends State<OcrTextScreen> {
 
   @override
   void dispose() {
-    _ocrService.dispose();
     _editController.dispose();
     _searchController.dispose();
     _scrollController.dispose();
+    final pending = _ocrInflight;
+    if (pending != null) {
+      // Avoid closing ML Kit while a recognition call is still in flight.
+      pending.whenComplete(_ocrService.dispose);
+    } else {
+      _ocrService.dispose();
+    }
     super.dispose();
   }
 
   // ─── Extraction ──────────────────────────────────────────────────────────
 
   Future<void> _run(File file) async {
+    final op = _runBody(file);
+    _ocrInflight = op;
+    try {
+      await op;
+    } finally {
+      if (identical(_ocrInflight, op)) _ocrInflight = null;
+    }
+  }
+
+  Future<void> _runBody(File file) async {
     setState(() {
       _isProcessing = true;
       _processingPage = 0;

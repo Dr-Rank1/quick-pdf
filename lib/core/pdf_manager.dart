@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
+import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart' hide PdfDocument;
 import 'package:pdf/widgets.dart' as pw;
@@ -26,22 +28,25 @@ class PDFManager {
     }
 
     final isolate = await PdfProcessorIsolate.spawn();
-    final pdfBytes = await isolate.convertImagesToPDF(
-      imageBytesList,
-      pageSize: pageSize,
-      landscape: landscape,
-      quality: quality,
-      margin: margin,
-    );
-    await isolate.kill();
+    try {
+      final pdfBytes = await isolate.convertImagesToPDF(
+        imageBytesList,
+        pageSize: pageSize,
+        landscape: landscape,
+        quality: quality,
+        margin: margin,
+      );
 
-    final Directory appDocDir = await getApplicationDocumentsDirectory();
-    final String filename = (outputName?.isNotEmpty == true)
-        ? '$outputName.pdf'
-        : 'QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf';
-    final File pdfFile = File('${appDocDir.path}/$filename');
-    await pdfFile.writeAsBytes(pdfBytes);
-    return pdfFile;
+      final Directory appDocDir = await getApplicationDocumentsDirectory();
+      final String filename = (outputName?.isNotEmpty == true)
+          ? '$outputName.pdf'
+          : 'QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final File pdfFile = File('${appDocDir.path}/$filename');
+      await pdfFile.writeAsBytes(pdfBytes);
+      return pdfFile;
+    } finally {
+      await isolate.kill();
+    }
   }
 
   /// Merges PDFs via Syncfusion templates so vector text and graphics stay
@@ -72,28 +77,37 @@ class PDFManager {
     int donePages = 0;
 
     try {
+      merged.pageSettings.margins.all = 0;
+
       for (int docIdx = 0; docIdx < pdfs.length; docIdx++) {
         final bytes = await pdfs[docIdx].readAsBytes();
         final source = sf.PdfDocument(inputBytes: bytes.toList());
-        final int total = source.pages.count;
-        final List<int>? sel = pageSelections?[docIdx];
+        try {
+          final int total = source.pages.count;
+          final List<int>? sel = pageSelections?[docIdx];
 
-        final List<int> pages = sel != null
-            ? (sel.where((p) => p >= 1 && p <= total).toList()..sort())
-            : List.generate(total, (i) => i + 1);
+          final List<int> pages = sel != null
+              ? (sel.where((p) => p >= 1 && p <= total).toList()..sort())
+              : List.generate(total, (i) => i + 1);
 
-        for (final pageNum in pages) {
-          donePages++;
-          onProgress?.call(donePages, totalPages);
+          for (final pageNum in pages) {
+            donePages++;
+            onProgress?.call(donePages, totalPages);
 
-          final srcPage = source.pages[pageNum - 1];
-          final template = srcPage.createTemplate();
-          final destPage = merged.pages.add();
-          destPage.graphics.drawPdfTemplate(template, ui.Offset.zero);
+            final srcPage = source.pages[pageNum - 1];
+            final template = srcPage.createTemplate();
+            final pageSize = srcPage.size;
+            // Match destination page geometry to the source page.
+            merged.pageSettings.size = pageSize;
+            final destPage = merged.pages.add();
+            destPage.graphics
+                .drawPdfTemplate(template, ui.Offset.zero, pageSize);
 
-          await Future.delayed(Duration.zero);
+            await Future.delayed(Duration.zero);
+          }
+        } finally {
+          source.dispose();
         }
-        source.dispose();
       }
 
       final List<int> mergedBytes = merged.saveSync();
@@ -120,54 +134,57 @@ class PDFManager {
   }) async {
     final Uint8List pdfBytes = await pdfFile.readAsBytes();
     final source = await PdfDocument.openData(pdfBytes);
-    final pw.Document target = pw.Document(compress: true);
-    final int pageCount = source.pageCount;
+    try {
+      final pw.Document target = pw.Document(compress: true);
+      final int pageCount = source.pageCount;
 
-    for (int i = 1; i <= pageCount; i++) {
-      onProgress?.call(i, pageCount);
+      for (int i = 1; i <= pageCount; i++) {
+        onProgress?.call(i, pageCount);
 
-      final page = await source.getPage(i);
-      final int rw = (page.width * renderScale).round();
-      final int rh = (page.height * renderScale).round();
-      final pageImage = await page.render(width: rw, height: rh);
+        final page = await source.getPage(i);
+        final int rw = (page.width * renderScale).round();
+        final int rh = (page.height * renderScale).round();
+        final pageImage = await page.render(width: rw, height: rh);
 
-      // Yield so Flutter can process redraws between pages.
-      await Future.delayed(Duration.zero);
+        // Yield so Flutter can process redraws between pages.
+        await Future.delayed(Duration.zero);
 
-      final image = img.Image.fromBytes(
-        width: pageImage.width,
-        height: pageImage.height,
-        bytes: pageImage.pixels.buffer,
-        format: img.Format.uint8,
-        numChannels: 4,
-        order: img.ChannelOrder.rgba,
-      );
-      final encoded =
-          Uint8List.fromList(img.encodeJpg(image, quality: imageQuality));
+        final image = img.Image.fromBytes(
+          width: pageImage.width,
+          height: pageImage.height,
+          bytes: pageImage.pixels.buffer,
+          format: img.Format.uint8,
+          numChannels: 4,
+          order: img.ChannelOrder.rgba,
+        );
+        final encoded =
+            Uint8List.fromList(img.encodeJpg(image, quality: imageQuality));
 
-      // Page size in PDF points (page.width/height), NOT pixel dimensions.
-      target.addPage(pw.Page(
-        pageFormat: PdfPageFormat(page.width, page.height),
-        margin: pw.EdgeInsets.zero,
-        build: (_) => pw.Image(pw.MemoryImage(encoded)),
-      ));
+        // Page size in PDF points (page.width/height), NOT pixel dimensions.
+        target.addPage(pw.Page(
+          pageFormat: PdfPageFormat(page.width, page.height),
+          margin: pw.EdgeInsets.zero,
+          build: (_) => pw.Image(pw.MemoryImage(encoded)),
+        ));
 
-      await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+      }
+
+      final Uint8List compressedBytes = await target.save();
+      // Never write a larger file — fall back to the original bytes if compression
+      // produced no benefit (e.g. text-only / already-optimised PDFs).
+      final Uint8List outputBytes =
+          compressedBytes.length < pdfBytes.length ? compressedBytes : pdfBytes;
+      final Directory appDocDir = await getApplicationDocumentsDirectory();
+      final String filename = (outputName?.isNotEmpty == true)
+          ? '$outputName.pdf'
+          : 'Compressed_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final File compressedFile = File('${appDocDir.path}/$filename');
+      await compressedFile.writeAsBytes(outputBytes);
+      return compressedFile;
+    } finally {
+      await source.dispose();
     }
-    await source.dispose();
-
-    final Uint8List compressedBytes = await target.save();
-    // Never write a larger file — fall back to the original bytes if compression
-    // produced no benefit (e.g. text-only / already-optimised PDFs).
-    final Uint8List outputBytes =
-        compressedBytes.length < pdfBytes.length ? compressedBytes : pdfBytes;
-    final Directory appDocDir = await getApplicationDocumentsDirectory();
-    final String filename = (outputName?.isNotEmpty == true)
-        ? '$outputName.pdf'
-        : 'Compressed_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf';
-    final File compressedFile = File('${appDocDir.path}/$filename');
-    await compressedFile.writeAsBytes(outputBytes);
-    return compressedFile;
   }
 
   /// Splits a PDF into individual pages (or a page range) via Syncfusion
@@ -197,9 +214,13 @@ class PDFManager {
 
         final srcPage = source.pages[pageNum - 1];
         final template = srcPage.createTemplate();
+        final pageSize = srcPage.size;
         final single = sf.PdfDocument();
         try {
-          single.pages.add().graphics.drawPdfTemplate(template, ui.Offset.zero);
+          single.pageSettings.margins.all = 0;
+          single.pageSettings.size = pageSize;
+          single.pages.add().graphics
+              .drawPdfTemplate(template, ui.Offset.zero, pageSize);
 
           final padded = pageNum.toString().padLeft(padLen.length, '0');
           final File outFile =
@@ -218,7 +239,7 @@ class PDFManager {
     return results;
   }
 
-  /// Updates PDF metadata by rasterising pages into a new document.
+  /// Updates PDF metadata without rasterising pages (vector content preserved).
   static Future<File> updatePDFMetadata(
     File pdfFile, {
     String? author,
@@ -227,49 +248,25 @@ class PDFManager {
     String? keywords,
   }) async {
     final Uint8List pdfBytes = await pdfFile.readAsBytes();
-    final sourceDoc = await PdfDocument.openData(pdfBytes);
+    final doc = sf.PdfDocument(inputBytes: pdfBytes.toList());
+    try {
+      final info = doc.documentInformation;
+      if (title != null) info.title = title;
+      if (author != null) info.author = author;
+      if (subject != null) info.subject = subject;
+      if (keywords != null) info.keywords = keywords;
+      info.creator = 'QuickPDF';
+      info.modificationDate = DateTime.now();
 
-    final pw.Document updatedPdf = pw.Document(
-      compress: true,
-      author: author,
-      title: title,
-      subject: subject,
-      keywords: keywords,
-      creator: 'QuickPDF',
-    );
-
-    for (int i = 1; i <= sourceDoc.pageCount; i++) {
-      final page = await sourceDoc.getPage(i);
-      final pageImage = await page.render(
-        width: page.width.toInt(),
-        height: page.height.toInt(),
-      );
-      await Future.delayed(Duration.zero);
-
-      final image = img.Image.fromBytes(
-        width: pageImage.width,
-        height: pageImage.height,
-        bytes: pageImage.pixels.buffer,
-        format: img.Format.uint8,
-        numChannels: 4,
-        order: img.ChannelOrder.rgba,
-      );
-      final pngBytes = img.encodePng(image);
-      updatedPdf.addPage(pw.Page(
-        pageFormat: PdfPageFormat(page.width, page.height),
-        margin: pw.EdgeInsets.zero,
-        build: (_) => pw.Image(pw.MemoryImage(pngBytes)),
-      ));
-      await Future.delayed(Duration.zero);
+      final List<int> updatedBytes = doc.saveSync();
+      final Directory appDocDir = await getApplicationDocumentsDirectory();
+      final File updatedFile = File(
+          '${appDocDir.path}/UpdatedMetadata_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
+      await updatedFile.writeAsBytes(updatedBytes);
+      return updatedFile;
+    } finally {
+      doc.dispose();
     }
-    await sourceDoc.dispose();
-
-    final Uint8List updatedBytes = await updatedPdf.save();
-    final Directory appDocDir = await getApplicationDocumentsDirectory();
-    final File updatedFile = File(
-        '${appDocDir.path}/UpdatedMetadata_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
-    await updatedFile.writeAsBytes(updatedBytes);
-    return updatedFile;
   }
 
   /// Encrypts a PDF with AES-256 password protection without rasterising pages,
@@ -285,20 +282,23 @@ class PDFManager {
 
     final sf.PdfDocument doc =
         sf.PdfDocument(inputBytes: pdfBytes.toList());
-    doc.security
-      ..userPassword = userPassword
-      ..ownerPassword = ownerPassword ?? userPassword
-      ..algorithm = sf.PdfEncryptionAlgorithm.aesx256Bit;
+    try {
+      doc.security
+        ..userPassword = userPassword
+        ..ownerPassword = ownerPassword ?? userPassword
+        ..algorithm = sf.PdfEncryptionAlgorithm.aesx256Bit;
 
-    final List<int> outBytes = doc.saveSync();
-    doc.dispose();
-    onProgress?.call(1, 1);
+      final List<int> outBytes = doc.saveSync();
+      onProgress?.call(1, 1);
 
-    final Directory appDocDir = await getApplicationDocumentsDirectory();
-    final File out = File(
-        '${appDocDir.path}/Protected_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
-    await out.writeAsBytes(outBytes);
-    return out;
+      final Directory appDocDir = await getApplicationDocumentsDirectory();
+      final File out = File(
+          '${appDocDir.path}/Protected_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
+      await out.writeAsBytes(outBytes);
+      return out;
+    } finally {
+      doc.dispose();
+    }
   }
 
   /// Removes the password from a PDF. Throws if the password is incorrect.
@@ -312,19 +312,22 @@ class PDFManager {
 
     final sf.PdfDocument doc =
         sf.PdfDocument(inputBytes: pdfBytes.toList(), password: password);
-    doc.security
-      ..userPassword = ''
-      ..ownerPassword = '';
+    try {
+      doc.security
+        ..userPassword = ''
+        ..ownerPassword = '';
 
-    final List<int> outBytes = doc.saveSync();
-    doc.dispose();
-    onProgress?.call(1, 1);
+      final List<int> outBytes = doc.saveSync();
+      onProgress?.call(1, 1);
 
-    final Directory appDocDir = await getApplicationDocumentsDirectory();
-    final File out = File(
-        '${appDocDir.path}/Unlocked_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
-    await out.writeAsBytes(outBytes);
-    return out;
+      final Directory appDocDir = await getApplicationDocumentsDirectory();
+      final File out = File(
+          '${appDocDir.path}/Unlocked_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
+      await out.writeAsBytes(outBytes);
+      return out;
+    } finally {
+      doc.dispose();
+    }
   }
 
   /// Applies a text watermark to every page of a PDF.
@@ -338,62 +341,65 @@ class PDFManager {
   }) async {
     final Uint8List pdfBytes = await pdfFile.readAsBytes();
     final source = await PdfDocument.openData(pdfBytes);
-    final target = pw.Document(compress: true);
-    final int pageCount = source.pageCount;
+    try {
+      final target = pw.Document(compress: true);
+      final int pageCount = source.pageCount;
 
-    for (int i = 1; i <= pageCount; i++) {
-      onProgress?.call(i, pageCount);
-      final page = await source.getPage(i);
-      final pageImage = await page.render(
-        width: (page.width * 2).round(),
-        height: (page.height * 2).round(),
-      );
-      await Future.delayed(Duration.zero);
+      for (int i = 1; i <= pageCount; i++) {
+        onProgress?.call(i, pageCount);
+        final page = await source.getPage(i);
+        final pageImage = await page.render(
+          width: (page.width * 2).round(),
+          height: (page.height * 2).round(),
+        );
+        await Future.delayed(Duration.zero);
 
-      final image = img.Image.fromBytes(
-        width: pageImage.width,
-        height: pageImage.height,
-        bytes: pageImage.pixels.buffer,
-        format: img.Format.uint8,
-        numChannels: 4,
-        order: img.ChannelOrder.rgba,
-      );
-      final encoded = Uint8List.fromList(img.encodeJpg(image, quality: 90));
+        final image = img.Image.fromBytes(
+          width: pageImage.width,
+          height: pageImage.height,
+          bytes: pageImage.pixels.buffer,
+          format: img.Format.uint8,
+          numChannels: 4,
+          order: img.ChannelOrder.rgba,
+        );
+        final encoded = Uint8List.fromList(img.encodeJpg(image, quality: 90));
 
-      target.addPage(pw.Page(
-        pageFormat: PdfPageFormat(page.width, page.height),
-        margin: pw.EdgeInsets.zero,
-        build: (ctx) => pw.Stack(
-          children: [
-            pw.Image(pw.MemoryImage(encoded)),
-            pw.Center(
-              child: pw.Transform.rotate(
-                angle: rotationDegrees * 3.14159 / 180,
-                child: pw.Opacity(
-                  opacity: opacity,
-                  child: pw.Text(
-                    text,
-                    style: pw.TextStyle(
-                      fontSize: fontSize,
-                      color: PdfColors.grey,
-                      fontWeight: pw.FontWeight.bold,
+        target.addPage(pw.Page(
+          pageFormat: PdfPageFormat(page.width, page.height),
+          margin: pw.EdgeInsets.zero,
+          build: (ctx) => pw.Stack(
+            children: [
+              pw.Image(pw.MemoryImage(encoded)),
+              pw.Center(
+                child: pw.Transform.rotate(
+                  angle: rotationDegrees * 3.14159 / 180,
+                  child: pw.Opacity(
+                    opacity: opacity,
+                    child: pw.Text(
+                      text,
+                      style: pw.TextStyle(
+                        fontSize: fontSize,
+                        color: PdfColors.grey,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
-        ),
-      ));
-      await Future.delayed(Duration.zero);
-    }
-    await source.dispose();
+            ],
+          ),
+        ));
+        await Future.delayed(Duration.zero);
+      }
 
-    final Directory appDocDir = await getApplicationDocumentsDirectory();
-    final File out = File(
-        '${appDocDir.path}/Watermarked_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
-    await out.writeAsBytes(await target.save());
-    return out;
+      final Directory appDocDir = await getApplicationDocumentsDirectory();
+      final File out = File(
+          '${appDocDir.path}/Watermarked_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
+      await out.writeAsBytes(await target.save());
+      return out;
+    } finally {
+      await source.dispose();
+    }
   }
 
   /// Reorders / selects pages from a PDF. [pageOrder] is a 1-indexed list
@@ -408,58 +414,61 @@ class PDFManager {
   }) async {
     final Uint8List pdfBytes = await pdfFile.readAsBytes();
     final source = await PdfDocument.openData(pdfBytes);
-    final target = pw.Document(compress: true);
-    final int total = pageOrder.length;
+    try {
+      final target = pw.Document(compress: true);
+      final int total = pageOrder.length;
 
-    for (int i = 0; i < total; i++) {
-      onProgress?.call(i + 1, total);
-      final pageNum = pageOrder[i];
-      if (pageNum < 1 || pageNum > source.pageCount) continue;
+      for (int i = 0; i < total; i++) {
+        onProgress?.call(i + 1, total);
+        final pageNum = pageOrder[i];
+        if (pageNum < 1 || pageNum > source.pageCount) continue;
 
-      final page = await source.getPage(pageNum);
-      final pageImage = await page.render(
-        width: (page.width * 2).round(),
-        height: (page.height * 2).round(),
-      );
-      await Future.delayed(Duration.zero);
+        final page = await source.getPage(pageNum);
+        final pageImage = await page.render(
+          width: (page.width * 2).round(),
+          height: (page.height * 2).round(),
+        );
+        await Future.delayed(Duration.zero);
 
-      final image = img.Image.fromBytes(
-        width: pageImage.width,
-        height: pageImage.height,
-        bytes: pageImage.pixels.buffer,
-        format: img.Format.uint8,
-        numChannels: 4,
-        order: img.ChannelOrder.rgba,
-      );
+        final image = img.Image.fromBytes(
+          width: pageImage.width,
+          height: pageImage.height,
+          bytes: pageImage.pixels.buffer,
+          format: img.Format.uint8,
+          numChannels: 4,
+          order: img.ChannelOrder.rgba,
+        );
 
-      final rotation = (rotations != null && i < rotations.length)
-          ? rotations[i] % 360
-          : 0;
-      final img.Image outputImage = rotation == 0
-          ? image
-          : img.copyRotate(image, angle: rotation.toDouble());
+        final rawRotation =
+            (rotations != null && i < rotations.length) ? rotations[i] : 0;
+        final rotation = ((rawRotation % 360) + 360) % 360;
+        final img.Image outputImage = rotation == 0
+            ? image
+            : img.copyRotate(image, angle: rotation.toDouble());
 
-      final encoded =
-          Uint8List.fromList(img.encodeJpg(outputImage, quality: 90));
-      final pageWidth =
-          rotation % 180 == 0 ? page.width : page.height;
-      final pageHeight =
-          rotation % 180 == 0 ? page.height : page.width;
+        final encoded =
+            Uint8List.fromList(img.encodeJpg(outputImage, quality: 90));
+        final pageWidth =
+            rotation % 180 == 0 ? page.width : page.height;
+        final pageHeight =
+            rotation % 180 == 0 ? page.height : page.width;
 
-      target.addPage(pw.Page(
-        pageFormat: PdfPageFormat(pageWidth, pageHeight),
-        margin: pw.EdgeInsets.zero,
-        build: (_) => pw.Image(pw.MemoryImage(encoded)),
-      ));
-      await Future.delayed(Duration.zero);
+        target.addPage(pw.Page(
+          pageFormat: PdfPageFormat(pageWidth, pageHeight),
+          margin: pw.EdgeInsets.zero,
+          build: (_) => pw.Image(pw.MemoryImage(encoded)),
+        ));
+        await Future.delayed(Duration.zero);
+      }
+
+      final Directory appDocDir = await getApplicationDocumentsDirectory();
+      final File out = File(
+          '${appDocDir.path}/Reordered_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
+      await out.writeAsBytes(await target.save());
+      return out;
+    } finally {
+      await source.dispose();
     }
-    await source.dispose();
-
-    final Directory appDocDir = await getApplicationDocumentsDirectory();
-    final File out = File(
-        '${appDocDir.path}/Reordered_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
-    await out.writeAsBytes(await target.save());
-    return out;
   }
 
   static Future<int> getPageCount(String path) async {
@@ -487,7 +496,7 @@ class PDFManager {
       if (!await thumbDir.exists()) await thumbDir.create(recursive: true);
 
       // Stable cache key so the same source always maps to the same thumb file.
-      final key = path.hashCode.abs().toString();
+      final key = sha1.convert(utf8.encode(path)).toString();
       final thumbPath = '${thumbDir.path}/thumb_$key.png';
       final thumbFile = File(thumbPath);
 

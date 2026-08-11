@@ -346,8 +346,8 @@ class _PasswordProtectScreenState extends State<PasswordProtectScreen>
         ),
         const SizedBox(height: 12),
         Text(
-          'Note: Password protection rasterises pages to images. Text search '
-          'inside the protected file will not be available.',
+          'Note: Encryption uses AES-256 and keeps the original pages '
+          '(text stays selectable). You will need the password to open the file.',
           style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
           textAlign: TextAlign.center,
         ),
