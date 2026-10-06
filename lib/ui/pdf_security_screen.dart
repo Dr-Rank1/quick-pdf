@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart' as sf;
 
 class EditMetadataScreen extends StatefulWidget {
   final File pdfFile;
@@ -18,17 +20,52 @@ class _EditMetadataScreenState extends State<EditMetadataScreen> {
   final _authorController = TextEditingController();
   final _titleController = TextEditingController();
   final _subjectController = TextEditingController();
+  final _keywordsController = TextEditingController();
+
+  String _origTitle = '';
+  String _origAuthor = '';
+  String _origSubject = '';
+  String _origKeywords = '';
 
   bool get _hasChanges =>
-      _authorController.text.isNotEmpty ||
-      _titleController.text.isNotEmpty ||
-      _subjectController.text.isNotEmpty;
+      _titleController.text.trim() != _origTitle ||
+      _authorController.text.trim() != _origAuthor ||
+      _subjectController.text.trim() != _origSubject ||
+      _keywordsController.text.trim() != _origKeywords;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadExistingMetadata();
+  }
+
+  Future<void> _loadExistingMetadata() async {
+    try {
+      final bytes = await widget.pdfFile.readAsBytes();
+      final doc = sf.PdfDocument(inputBytes: bytes.toList());
+      try {
+        final info = doc.documentInformation;
+        _origTitle = info.title;
+        _origAuthor = info.author;
+        _origSubject = info.subject;
+        _origKeywords = info.keywords;
+        _titleController.text = _origTitle;
+        _authorController.text = _origAuthor;
+        _subjectController.text = _origSubject;
+        _keywordsController.text = _origKeywords;
+      } finally {
+        doc.dispose();
+      }
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
     _authorController.dispose();
     _titleController.dispose();
     _subjectController.dispose();
+    _keywordsController.dispose();
     super.dispose();
   }
 
@@ -95,6 +132,16 @@ class _EditMetadataScreenState extends State<EditMetadataScreen> {
                           ),
                           onChanged: (_) => setState(() {}),
                         ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _keywordsController,
+                          decoration: const InputDecoration(
+                            labelText: 'Keywords (comma-separated)',
+                            prefixIcon: Icon(Icons.tag),
+                            isDense: true,
+                          ),
+                          onChanged: (_) => setState(() {}),
+                        ),
                       ],
                     ),
                   ),
@@ -127,9 +174,11 @@ class _EditMetadataScreenState extends State<EditMetadataScreen> {
         author: _authorController.text.trim().isNotEmpty ? _authorController.text.trim() : null,
         title: _titleController.text.trim().isNotEmpty ? _titleController.text.trim() : null,
         subject: _subjectController.text.trim().isNotEmpty ? _subjectController.text.trim() : null,
+        keywords: _keywordsController.text.trim().isNotEmpty ? _keywordsController.text.trim() : null,
       );
       final thumbPath = await PDFManager.generateThumbnail(updatedFile.path);
       await DocumentDatabase().insertDocument(updatedFile.path, thumbnailPath: thumbPath);
+      await ToolSuccessService.onMajorOperationComplete();
       if (mounted) {
         PDFManager.hapticFeedbackSuccess();
         Navigator.of(context).pop();

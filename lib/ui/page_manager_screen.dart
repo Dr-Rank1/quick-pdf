@@ -4,7 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:pdf_render_maintained/pdf_render.dart' as render;
 import 'package:quick_pdf/core/pdf_manager.dart';
-import 'package:quick_pdf/services/ad_service.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
 import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/services/document_database.dart';
 
@@ -144,7 +144,7 @@ class _PageManagerScreenState extends State<PageManagerScreen> {
       await DocumentDatabase()
           .insertDocument(out.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
-      await AdService().recordToolCompletion();
+      await ToolSuccessService.onMajorOperationComplete();
       if (mounted) {
         _snack('Saved: ${fileName(out.path)}');
         Navigator.of(context).pop();
@@ -179,6 +179,7 @@ class _PageManagerScreenState extends State<PageManagerScreen> {
       await DocumentDatabase()
           .insertDocument(out.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
+      await ToolSuccessService.onMajorOperationComplete();
       if (mounted) _snack('Extracted ${selected.length} pages to ${fileName(out.path)}');
     } catch (e) {
       PDFManager.hapticFeedbackError();

@@ -1,12 +1,17 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:pdf_render_maintained/pdf_render.dart' as render;
 import 'package:pdfx/pdfx.dart';
+import 'package:quick_pdf/core/pdf_manager.dart';
+import 'package:quick_pdf/services/ad_service.dart';
+import 'package:quick_pdf/services/pdf_credential_store.dart';
 import 'package:quick_pdf/services/share_service.dart';
 import 'package:quick_pdf/ui/widgets/doc_thumb_hero.dart';
 import 'package:quick_pdf/utils/path_utils.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart' as sf;
 
 class PDFViewerScreen extends StatefulWidget {
   final String pdfPath;
@@ -27,6 +32,18 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
   bool _documentReady = false;
   Timer? _counterTimer;
 
+  // Password & security unlock state
+  bool _isPasswordProtected = false;
+  bool _isUnlocking = false;
+  String? _unlockError;
+  String? _errorMessage;
+  bool _biometricAvailable = false;
+  bool _hasStoredBiometric = false;
+  bool _saveBiometric = false;
+  bool _obscurePassword = true;
+  final TextEditingController _passwordController = TextEditingController();
+  File? _unlockedTempFile;
+
   // Thumbnails for the strip
   final Map<int, Uint8List> _thumbs = {};
   bool _thumbsLoading = false;
@@ -40,13 +57,152 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
     _pdfController = PdfController(
       document: PdfDocument.openFile(widget.pdfPath),
     );
+    _checkSecurity();
+  }
+
+  Future<void> _checkSecurity() async {
+    final available = await PdfCredentialStore.instance.canUseBiometrics();
+    final hasStored =
+        await PdfCredentialStore.instance.hasStoredPassword(widget.pdfPath);
+    if (mounted) {
+      setState(() {
+        _biometricAvailable = available;
+        _hasStoredBiometric = hasStored;
+        if (available && !hasStored) {
+          _saveBiometric = true;
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
     _counterTimer?.cancel();
+    _passwordController.dispose();
     _pdfController.dispose();
+    final temp = _unlockedTempFile;
+    if (temp != null && temp.existsSync()) {
+      try {
+        temp.deleteSync();
+      } catch (_) {}
+    }
     super.dispose();
+  }
+
+  Future<void> _handleDocumentError(dynamic error) async {
+    debugPrint('PDF viewer error: $error');
+    if (!mounted) return;
+
+    final isProtected = await _isEncryptedPdf(widget.pdfPath);
+    if (!mounted) return;
+
+    if (isProtected || _hasStoredBiometric) {
+      setState(() {
+        _isPasswordProtected = true;
+        _errorMessage = null;
+      });
+      if (_hasStoredBiometric && _biometricAvailable) {
+        await _unlockWithBiometrics();
+      }
+    } else {
+      setState(() {
+        _errorMessage =
+            'Unable to display this PDF. The document may be corrupted or in an unsupported format.';
+      });
+    }
+  }
+
+  Future<bool> _isEncryptedPdf(String path) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return false;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return false;
+
+      final headerLength = bytes.length < 2048 ? bytes.length : 2048;
+      final header = String.fromCharCodes(bytes.take(headerLength));
+      if (header.contains('/Encrypt')) return true;
+
+      final trailerLength = bytes.length < 4096 ? bytes.length : 4096;
+      final trailer =
+          String.fromCharCodes(bytes.sublist(bytes.length - trailerLength));
+      if (trailer.contains('/Encrypt')) return true;
+
+      try {
+        final doc = sf.PdfDocument(inputBytes: bytes.toList());
+        doc.dispose();
+        return false;
+      } catch (e) {
+        final msg = e.toString().toLowerCase();
+        if (msg.contains('password') ||
+            msg.contains('encrypt') ||
+            msg.contains('security')) {
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<void> _unlockWithPassword(String password,
+      {bool saveBiometric = false}) async {
+    final trimmed = password.trim();
+    if (trimmed.isEmpty) return;
+
+    setState(() {
+      _isUnlocking = true;
+      _unlockError = null;
+    });
+
+    try {
+      final decrypted = await PDFManager.decryptPDF(
+        File(widget.pdfPath),
+        password: trimmed,
+      );
+
+      if (saveBiometric) {
+        await PdfCredentialStore.instance.savePassword(widget.pdfPath, trimmed);
+        _hasStoredBiometric = true;
+      }
+
+      final oldController = _pdfController;
+      _unlockedTempFile = decrypted;
+      _pdfController = PdfController(
+        document: PdfDocument.openFile(decrypted.path),
+      );
+      oldController.dispose();
+
+      if (mounted) {
+        setState(() {
+          _isPasswordProtected = false;
+          _isUnlocking = false;
+          _unlockError = null;
+        });
+        PDFManager.hapticFeedbackSuccess();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isUnlocking = false;
+          _unlockError = 'Incorrect password. Please try again.';
+        });
+        PDFManager.hapticFeedbackError();
+      }
+    }
+  }
+
+  Future<void> _unlockWithBiometrics() async {
+    if (!_biometricAvailable || !_hasStoredBiometric) return;
+    try {
+      final password = await PdfCredentialStore.instance.unlockWithBiometrics(
+        widget.pdfPath,
+        reason: 'Unlock $_filename',
+      );
+      if (password != null && mounted) {
+        _passwordController.text = password;
+        await _unlockWithPassword(password, saveBiometric: false);
+      }
+    } catch (_) {}
   }
 
   void _onPageChanged(int page) {
@@ -64,7 +220,8 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
     if (_thumbsLoading || _totalPages == 0) return;
     _thumbsLoading = true;
     try {
-      final doc = await render.PdfDocument.openFile(widget.pdfPath);
+      final renderPath = _unlockedTempFile?.path ?? widget.pdfPath;
+      final doc = await render.PdfDocument.openFile(renderPath);
       try {
         for (int i = 1; i <= _totalPages; i++) {
           if (!mounted) break;
@@ -140,7 +297,14 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          AdService().showInterstitialIfReady();
+        }
+      },
+      child: Scaffold(
       backgroundColor: _nightMode ? Colors.black : null,
       appBar: AppBar(
         backgroundColor: _nightMode ? Colors.black : null,
@@ -166,151 +330,315 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
           ],
         ),
         actions: [
-          if (_totalPages > 1)
+          if (!_isPasswordProtected && _errorMessage == null) ...[
+            if (_totalPages > 1)
+              IconButton(
+                icon: const Icon(Icons.menu_book_outlined),
+                tooltip: 'Go to page',
+                onPressed: _goToPage,
+              ),
             IconButton(
-              icon: const Icon(Icons.menu_book_outlined),
-              tooltip: 'Go to page',
-              onPressed: _goToPage,
+              icon: Icon(_nightMode ? Icons.wb_sunny_outlined : Icons.nightlight_outlined),
+              tooltip: _nightMode ? 'Day mode' : 'Night mode',
+              onPressed: () => setState(() => _nightMode = !_nightMode),
             ),
-          IconButton(
-            icon: Icon(_nightMode ? Icons.wb_sunny_outlined : Icons.nightlight_outlined),
-            tooltip: _nightMode ? 'Day mode' : 'Night mode',
-            onPressed: () => setState(() => _nightMode = !_nightMode),
-          ),
-          IconButton(
-            icon: const Icon(Icons.share_outlined),
-            tooltip: 'Share',
-            onPressed: () => _share(context),
-          ),
+            IconButton(
+              icon: const Icon(Icons.share_outlined),
+              tooltip: 'Share',
+              onPressed: () => _share(context),
+            ),
+          ],
         ],
       ),
-      body: Stack(
-        children: [
-          // ── PDF view ──
-          Hero(
-            tag: widget.heroTag ?? docThumbHeroTag(widget.pdfPath),
-            flightShuttleBuilder: docThumbHeroFlightShuttle,
-            child: Material(
-              type: MaterialType.transparency,
-              child: SizedBox.expand(
-                child: ColoredBox(
-                  color: _nightMode
-                      ? Colors.black
-                      : Theme.of(context).colorScheme.surface,
-                ),
-              ),
-            ),
-          ),
-          AnimatedOpacity(
-            opacity: _documentReady ? 1.0 : 0.0,
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeOut,
-            child: ColorFiltered(
-            colorFilter: _nightMode
-                ? const ColorFilter.matrix([
-                    -1, 0, 0, 0, 255,
-                    0, -1, 0, 0, 255,
-                    0, 0, -1, 0, 255,
-                    0,  0, 0, 1,   0,
-                  ])
-                : const ColorFilter.mode(Colors.transparent, BlendMode.dst),
-            child: PdfView(
-              controller: _pdfController,
-              scrollDirection: Axis.vertical,
-              pageSnapping: false,
-              onPageChanged: _onPageChanged,
-              onDocumentLoaded: (doc) {
-                setState(() {
-                  _totalPages = doc.pagesCount;
-                  _documentReady = true;
-                });
-                _loadThumbs();
-              },
-              onDocumentError: (error) =>
-                  debugPrint('PDF viewer error: $error'),
-            ),
-          ),
-          ),
+      body: _isPasswordProtected
+          ? _buildPasswordPrompt(context)
+          : _errorMessage != null
+              ? _buildErrorState(context)
+              : Stack(
+                  children: [
+                    // ── PDF view ──
+                    Hero(
+                      tag: widget.heroTag ?? docThumbHeroTag(widget.pdfPath),
+                      flightShuttleBuilder: docThumbHeroFlightShuttle,
+                      child: Material(
+                        type: MaterialType.transparency,
+                        child: SizedBox.expand(
+                          child: ColoredBox(
+                            color: _nightMode
+                                ? Colors.black
+                                : Theme.of(context).colorScheme.surface,
+                          ),
+                        ),
+                      ),
+                    ),
+                    AnimatedOpacity(
+                      opacity: _documentReady ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOut,
+                      child: ColorFiltered(
+                        colorFilter: _nightMode
+                            ? const ColorFilter.matrix([
+                                -1, 0, 0, 0, 255,
+                                0, -1, 0, 0, 255,
+                                0, 0, -1, 0, 255,
+                                0,  0, 0, 1,   0,
+                              ])
+                            : const ColorFilter.mode(Colors.transparent, BlendMode.dst),
+                        child: PdfView(
+                          controller: _pdfController,
+                          scrollDirection: Axis.vertical,
+                          pageSnapping: false,
+                          onPageChanged: _onPageChanged,
+                          onDocumentLoaded: (doc) {
+                            setState(() {
+                              _totalPages = doc.pagesCount;
+                              _documentReady = true;
+                            });
+                            _loadThumbs();
+                          },
+                          onDocumentError: _handleDocumentError,
+                        ),
+                      ),
+                    ),
 
-          // ── Floating page counter ──
-          if (_totalPages > 1)
-            Positioned(
-              top: 12,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: AnimatedOpacity(
-                  opacity: _showCounter ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 300),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.65),
-                      borderRadius: BorderRadius.circular(16),
+                    // ── Floating page counter ──
+                    if (_totalPages > 1)
+                      Positioned(
+                        top: 12,
+                        left: 0,
+                        right: 0,
+                        child: Center(
+                          child: AnimatedOpacity(
+                            opacity: _showCounter ? 1.0 : 0.0,
+                            duration: const Duration(milliseconds: 300),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.65),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Text(
+                                '$_currentPage / $_totalPages',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                    // ── Navigation arrows ──
+                    if (_totalPages > 1)
+                      Positioned(
+                        bottom: _totalPages > 1 ? 100 : 20,
+                        right: 16,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _NavButton(
+                              icon: Icons.keyboard_arrow_up,
+                              enabled: _currentPage > 1,
+                              onTap: () => _pdfController.animateToPage(
+                                _currentPage - 1,
+                                duration: const Duration(milliseconds: 250),
+                                curve: Curves.easeInOut,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            _NavButton(
+                              icon: Icons.keyboard_arrow_down,
+                              enabled: _currentPage < _totalPages,
+                              onTap: () => _pdfController.animateToPage(
+                                _currentPage + 1,
+                                duration: const Duration(milliseconds: 250),
+                                curve: Curves.easeInOut,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                    // ── Thumbnail strip ──
+                    if (_totalPages > 1)
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: _ThumbnailStrip(
+                          totalPages: _totalPages,
+                          currentPage: _currentPage,
+                          thumbs: _thumbs,
+                          nightMode: _nightMode,
+                          onPageTap: (p) => _pdfController.animateToPage(
+                            p,
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeInOut,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+      ),
+    );
+  }
+
+  Widget _buildPasswordPrompt(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: Card(
+          elevation: 2,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.all(28.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: cs.primaryContainer,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.lock_outline, size: 36, color: cs.primary),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Password Protected',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This document is encrypted. Enter the password to view its contents.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                TextField(
+                  controller: _passwordController,
+                  obscureText: _obscurePassword,
+                  autofocus: true,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) {
+                    if (!_isUnlocking) {
+                      _unlockWithPassword(
+                        _passwordController.text,
+                        saveBiometric: _saveBiometric,
+                      );
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    prefixIcon: const Icon(Icons.key_outlined),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                      ),
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
                     ),
-                    child: Text(
-                      '$_currentPage / $_totalPages',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600),
-                    ),
+                    errorText: _unlockError,
+                    border: const OutlineInputBorder(),
                   ),
                 ),
-              ),
-            ),
-
-          // ── Navigation arrows ──
-          if (_totalPages > 1)
-            Positioned(
-              bottom: _totalPages > 1 ? 100 : 20,
-              right: 16,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _NavButton(
-                    icon: Icons.keyboard_arrow_up,
-                    enabled: _currentPage > 1,
-                    onTap: () => _pdfController.animateToPage(
-                      _currentPage - 1,
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeInOut,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _NavButton(
-                    icon: Icons.keyboard_arrow_down,
-                    enabled: _currentPage < _totalPages,
-                    onTap: () => _pdfController.animateToPage(
-                      _currentPage + 1,
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeInOut,
-                    ),
+                if (_biometricAvailable) ...[
+                  const SizedBox(height: 12),
+                  CheckboxListTile(
+                    value: _saveBiometric,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('Remember password with biometrics'),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    onChanged: (val) =>
+                        setState(() => _saveBiometric = val ?? false),
                   ),
                 ],
-              ),
-            ),
-
-          // ── Thumbnail strip ──
-          if (_totalPages > 1)
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: _ThumbnailStrip(
-                totalPages: _totalPages,
-                currentPage: _currentPage,
-                thumbs: _thumbs,
-                nightMode: _nightMode,
-                onPageTap: (p) => _pdfController.animateToPage(
-                  p,
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeInOut,
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    if (_hasStoredBiometric && _biometricAvailable) ...[
+                      OutlinedButton.icon(
+                        onPressed: _isUnlocking ? null : _unlockWithBiometrics,
+                        icon: const Icon(Icons.fingerprint),
+                        label: const Text('Biometrics'),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
+                    Expanded(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(48),
+                        ),
+                        onPressed: _isUnlocking
+                            ? null
+                            : () => _unlockWithPassword(
+                                  _passwordController.text,
+                                  saveBiometric: _saveBiometric,
+                                ),
+                        child: _isUnlocking
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Text('Unlock Document',
+                                style: TextStyle(fontSize: 16)),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
+              ],
             ),
-        ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: 64, color: cs.error),
+            const SizedBox(height: 16),
+            Text(
+              'Cannot Open PDF',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _errorMessage ??
+                  'An error occurred while loading this document.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: cs.onSurfaceVariant),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Go Back'),
+            ),
+          ],
+        ),
       ),
     );
   }

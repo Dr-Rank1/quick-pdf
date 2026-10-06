@@ -5,9 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:pdf_render_maintained/pdf_render.dart' as render;
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/utils/path_utils.dart';
-import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
 
 class WatermarkScreen extends StatefulWidget {
   final File? initialFile;
@@ -104,7 +104,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       final thumbPath = await PDFManager.generateThumbnail(out.path);
       await DocumentDatabase().insertDocument(out.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
-      await AdService().recordToolCompletion();
+      await ToolSuccessService.onMajorOperationComplete();
       if (mounted) {
         _snack('Watermark applied: ${fileName(out.path)}');
         setState(() { _file = null; _previewBytes = null; });

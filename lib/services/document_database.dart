@@ -178,7 +178,7 @@ class DocumentDatabase {
     final row = <String, Object?>{
       'path': path,
       'name': basename(file.path),
-      'size': await file.length(),
+      'size': await file.exists() ? await file.length() : 0,
       'lastOpened': DateTime.now().toIso8601String(),
     };
 

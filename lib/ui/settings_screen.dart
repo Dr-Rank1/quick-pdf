@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -9,9 +10,10 @@ import 'package:quick_pdf/constants/preference_keys.dart';
 import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/providers/theme_provider.dart';
 import 'package:quick_pdf/services/document_database.dart';
+import 'package:quick_pdf/services/error_logger.dart';
+import 'package:quick_pdf/services/share_service.dart';
 import 'package:quick_pdf/theme/app_colors.dart';
 import 'package:quick_pdf/services/ad_service.dart';
-import 'package:startapp_sdk/startapp.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -370,11 +372,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 width: 32,
                 height: 32,
                 decoration: BoxDecoration(
-                  color: AppColors.navy.withValues(alpha: 0.13),
+                  color: AppColors.primary(brightness).withValues(alpha: 0.13),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.balance_outlined,
-                    size: 16, color: AppColors.navy),
+                child: Icon(Icons.balance_outlined,
+                    size: 16, color: AppColors.primary(brightness)),
               ),
               title: const Text('Licences'),
               trailing: Icon(Icons.chevron_right, color: muted),
@@ -383,6 +385,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 applicationName: 'QuickPDF',
                 applicationVersion: _appVersion,
               ),
+            ),
+            Divider(height: 1, color: AppColors.border(brightness)),
+            ListTile(
+              leading: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE91E63).withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.bug_report_outlined,
+                    size: 16, color: Color(0xFFE91E63)),
+              ),
+              title: const Text('Diagnostics & Logs'),
+              subtitle: const Text('View and export local app error logs'),
+              trailing: Icon(Icons.chevron_right, color: muted),
+              onTap: () => _showDiagnostics(context),
             ),
           ]),
           const SizedBox(height: 24),
@@ -414,8 +433,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
             ]),
-            
-          if (AdService.shouldShowAds) const _MrecAd(),
           const SizedBox(height: 24),
         ],
       ),
@@ -444,6 +461,165 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  Future<void> _showDiagnostics(BuildContext context) async {
+    final logText = await ErrorLogger.read();
+    if (!context.mounted) return;
+
+    final brightness = Theme.of(context).brightness;
+    final surface2 = AppColors.surface2(brightness);
+    final border = AppColors.border(brightness);
+    final text = AppColors.text(brightness);
+    final muted = AppColors.muted(brightness);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface(brightness),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (modalCtx, setModalState) {
+            final hasLogs = logText.trim().isNotEmpty;
+            return DraggableScrollableSheet(
+              initialChildSize: 0.75,
+              minChildSize: 0.5,
+              maxChildSize: 0.95,
+              expand: false,
+              builder: (_, scrollController) {
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 16),
+                          decoration: BoxDecoration(
+                            color: border,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          Icon(Icons.bug_report_outlined,
+                              color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Diagnostics & Logs',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: text,
+                                ),
+                          ),
+                          const Spacer(),
+                          if (hasLogs) ...[
+                            IconButton(
+                              icon: const Icon(Icons.copy_outlined, size: 20),
+                              tooltip: 'Copy logs',
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: logText));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Logs copied to clipboard'),
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.share_outlined, size: 20),
+                              tooltip: 'Share logs',
+                              onPressed: () {
+                                ShareService.text(logText,
+                                    subject: 'QuickPDF Error Logs');
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 20),
+                              tooltip: 'Clear logs',
+                              onPressed: () async {
+                                await ErrorLogger.clear();
+                                if (modalCtx.mounted) {
+                                  Navigator.pop(modalCtx);
+                                }
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Error logs cleared'),
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                }
+                              },
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        child: Container(
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: surface2,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: border),
+                          ),
+                          padding: const EdgeInsets.all(14),
+                          child: hasLogs
+                              ? SingleChildScrollView(
+                                  controller: scrollController,
+                                  child: SelectableText(
+                                    logText,
+                                    style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                )
+                              : Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.check_circle_outline,
+                                          size: 48, color: Colors.green),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        'No errors logged',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          color: text,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'All local operations are running normally.',
+                                        style: TextStyle(
+                                            color: muted, fontSize: 12),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
   static const String _kPrivacyPolicy = '''
 ## QuickPDF Privacy Policy
 
@@ -454,7 +630,7 @@ QuickPDF processes documents **on your device**. There are no accounts and no fi
 ### Permissions
 - **Camera** — document scanning
 - **Storage** — open and save PDFs/images you choose
-- **Internet** — ads (Start.io) and optional store features
+- **Internet** — ads (Unity Ads) and optional store features
 
 ### Files
 Files you open or create stay on your device. Temporary cache can be cleared in Settings.
@@ -463,7 +639,7 @@ Files you open or create stay on your device. Temporary cache can be cleared in 
 Text recognition uses on-device ML Kit models. Recognised text does not leave your device.
 
 ### Advertising
-QuickPDF shows ads via **Start.io**. Document content is not used for ads.
+QuickPDF shows ads via **Unity Ads**. Document content is not used for ads.
 
 Contact: **stewiegriffin3108ia@gmail.com**
 ''';
@@ -504,43 +680,6 @@ class _CardSection extends StatelessWidget {
           child: Column(children: children),
         ),
       ],
-    );
-  }
-}
-
-class _MrecAd extends StatefulWidget {
-  const _MrecAd();
-
-  @override
-  State<_MrecAd> createState() => _MrecAdState();
-}
-
-class _MrecAdState extends State<_MrecAd> {
-  StartAppBannerAd? _ad;
-
-  @override
-  void initState() {
-    super.initState();
-    if (AdService.shouldShowAds) {
-      AdService().sdk.loadBannerAd(StartAppBannerType.MREC).then((ad) {
-        if (mounted) setState(() => _ad = ad);
-      }).catchError((_) {});
-    }
-  }
-
-  @override
-  void dispose() {
-    _ad?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_ad == null) return const SizedBox.shrink();
-    return Container(
-      alignment: Alignment.center,
-      margin: const EdgeInsets.only(top: 24),
-      child: StartAppBanner(_ad!),
     );
   }
 }

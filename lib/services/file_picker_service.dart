@@ -18,6 +18,7 @@ class FilePickerService {
 
       if (result != null && result.files.isNotEmpty) {
         return result.files
+            .where((file) => file.path != null)
             .map((file) => File(file.path!))
             .where((file) => file.existsSync())
             .toList();

@@ -9,9 +9,9 @@ import 'package:pdf_render_maintained/pdf_render.dart' as render;
 import 'package:image/image.dart' as img;
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/utils/path_utils.dart';
-import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
 
 class SignPdfScreen extends StatefulWidget {
   const SignPdfScreen({super.key});
@@ -130,7 +130,13 @@ class _SignPdfScreenState extends State<SignPdfScreen> {
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
     for (final stroke in _strokes) {
-      if (stroke.length < 2) continue;
+      if (stroke.isEmpty) continue;
+      if (stroke.length == 1) {
+        paint.style = PaintingStyle.fill;
+        canvas.drawCircle(stroke.first, 1.5, paint);
+        paint.style = PaintingStyle.stroke;
+        continue;
+      }
       final path = Path()..moveTo(stroke.first.dx, stroke.first.dy);
       for (final p in stroke.skip(1)) {
         path.lineTo(p.dx, p.dy);
@@ -158,11 +164,7 @@ class _SignPdfScreenState extends State<SignPdfScreen> {
 
     setState(() => _isProcessing = true);
     try {
-      await AdService().showRewardedOrFallback(
-        onRewarded: () async {
-          await _doApplySig(file, sigBytes);
-        },
-      );
+      await _doApplySig(file, sigBytes);
     } catch (e) {
       if (mounted) _snack('Failed: $e');
     } finally {
@@ -243,6 +245,7 @@ class _SignPdfScreenState extends State<SignPdfScreen> {
       await DocumentDatabase()
           .insertDocument(out.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
+      await ToolSuccessService.onMajorOperationComplete();
       if (mounted) {
         _snack('Signed: ${fileName(out.path)}');
         Navigator.of(context).pop();
@@ -524,7 +527,13 @@ class _SignaturePainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
     for (final stroke in [...strokes, current]) {
-      if (stroke.length < 2) continue;
+      if (stroke.isEmpty) continue;
+      if (stroke.length == 1) {
+        paint.style = PaintingStyle.fill;
+        canvas.drawCircle(stroke.first, 1.5, paint);
+        paint.style = PaintingStyle.stroke;
+        continue;
+      }
       final path = Path()..moveTo(stroke.first.dx, stroke.first.dy);
       for (final p in stroke.skip(1)) {
         path.lineTo(p.dx, p.dy);

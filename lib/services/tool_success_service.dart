@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/review_service.dart';
 
@@ -7,6 +9,11 @@ class ToolSuccessService {
 
   static Future<void> onMajorOperationComplete() async {
     await ReviewService.instance.recordMajorOperation();
-    await AdService().recordToolCompletion();
+    // Allow the tool's success screen or navigation transition to settle
+    // smoothly before evaluating and presenting any interstitial ad.
+    unawaited(Future.microtask(() async {
+      await Future.delayed(const Duration(milliseconds: 700));
+      await AdService().recordToolCompletion();
+    }));
   }
 }
