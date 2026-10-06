@@ -45,9 +45,9 @@ class ScannerService {
     File imageFile, {
     bool blackAndWhite = false,
   }) async {
-    final Directory appDocDir = await getApplicationDocumentsDirectory();
+    final Directory tempDir = await getTemporaryDirectory();
     final String outputPath =
-        '${appDocDir.path}/scan_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        '${tempDir.path}/scan_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
     final String resultPath = await compute(
       _enhancePipeline,

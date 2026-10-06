@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Quick Pdf</string>
+	<string>QuickPDF</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -49,12 +49,10 @@
 	</dict>
 	<key>NSFaceIDUsageDescription</key>
 	<string>QuickPDF uses Face ID to unlock saved passwords for encrypted PDFs.</string>
-	<key>com.startapp.sdk.APPLICATION_ID</key>
-	<string>206385656</string>
-	<key>com.startapp.sdk.RETURN_ADS_ENABLED</key>
-	<false/>
-	<key>com.startapp.sdk.SPLASH_ADS_ENABLED</key>
-	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>QuickPDF needs camera access to scan physical documents into PDF.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>QuickPDF needs photo library access to import images for PDF conversion.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

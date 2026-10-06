@@ -61,6 +61,38 @@ class _BatchScreenState extends State<BatchScreen> {
     }
     if (_running) return;
 
+    if (AdService.shouldShowAds) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.auto_awesome, color: Colors.amber),
+              SizedBox(width: 8),
+              Text('Batch Processing'),
+            ],
+          ),
+          content: Text(
+            'Batch processing will process all ${_items.length} files at once.\n\nWatch a short sponsor video to unlock this batch.',
+            style: const TextStyle(fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              icon: const Icon(Icons.play_circle_outline, size: 18),
+              label: const Text('Watch & Run'),
+            ),
+          ],
+        ),
+      );
+
+      if (proceed != true) return;
+    }
+
     setState(() => _running = true);
     try {
       await AdService().showRewardedOrFallback(onRewarded: () async {
@@ -98,7 +130,6 @@ class _BatchScreenState extends State<BatchScreen> {
           }
         }
         if (mounted) {
-          await AdService().recordToolCompletion();
           _snack('Batch complete');
         }
       });

@@ -41,10 +41,16 @@ class DocumentImportService {
     final total = files.length;
     for (var i = 0; i < files.length; i++) {
       final file = files[i];
-      final ext = p.extension(file.path).replaceFirst('.', '').toLowerCase();
-      final dest = File(
-        '${importDir.path}/Import_${DateTime.now().millisecondsSinceEpoch}_$i.$ext',
-      );
+      final ext = p.extension(file.path);
+      final rawName = p.basenameWithoutExtension(file.path).trim();
+      final baseName = rawName.isEmpty ? 'Import' : rawName;
+      var candidate = '${importDir.path}/$baseName$ext';
+      var counter = 1;
+      while (await File(candidate).exists()) {
+        candidate = '${importDir.path}/${baseName}_$counter$ext';
+        counter++;
+      }
+      final dest = File(candidate);
       await file.copy(dest.path);
 
       final thumbPath = await PDFManager.generateThumbnail(dest.path);

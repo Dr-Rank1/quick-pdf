@@ -21,10 +21,18 @@ ThemeData buildQuickPdfTheme(Brightness brightness) {
     displayColor: text,
   );
 
+  final isDark = brightness == Brightness.dark;
+  final primary = isDark ? AppColors.darkPrimary : AppColors.navy;
+  final onPrimary = isDark ? const Color(0xFF060D33) : Colors.white;
+  final primaryContainer =
+      isDark ? AppColors.darkPrimaryContainer : const Color(0xFFDDE1FF);
+  final onPrimaryContainer =
+      isDark ? const Color(0xFFDDE1FF) : AppColors.navy;
+
   final cs = ColorScheme(
     brightness: brightness,
-    primary: AppColors.navy,
-    onPrimary: Colors.white,
+    primary: primary,
+    onPrimary: onPrimary,
     secondary: AppColors.amber,
     onSecondary: const Color(0xFF070915),
     error: const Color(0xFFE53935),
@@ -37,8 +45,8 @@ ThemeData buildQuickPdfTheme(Brightness brightness) {
     surfaceContainerHighest: surface2,
     surfaceContainerHigh: surface2,
     surfaceContainer: surface,
-    primaryContainer: AppColors.navy,
-    onPrimaryContainer: Colors.white,
+    primaryContainer: primaryContainer,
+    onPrimaryContainer: onPrimaryContainer,
     secondaryContainer: AppColors.amber.withValues(alpha: 0.18),
     onSecondaryContainer: text,
   );

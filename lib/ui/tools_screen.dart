@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:quick_pdf/router/app_navigation.dart';
-import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/document_import_service.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
 import 'package:quick_pdf/ui/widgets/desktop_drop_zone.dart';
@@ -66,7 +65,6 @@ class ToolsScreen extends StatelessWidget {
   Future<void> _onDesktopDrop(BuildContext context, List<String> paths) async {
     final count = await DocumentImportService.instance.importPaths(paths);
     if (!context.mounted || count == 0) return;
-    AdService().recordToolCompletion();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text('Imported $count file${count == 1 ? '' : 's'}'),
       behavior: SnackBarBehavior.floating,

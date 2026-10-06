@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 abstract final class AppColors {
   static const amber = Color(0xFFFFB300);
   static const navy = Color(0xFF1E2E8E);
+  static const darkPrimary = Color(0xFF9AA8FF);
+  static const darkPrimaryContainer = Color(0xFF263380);
 
   // Dark
   static const darkBg = Color(0xFF0B0E1C);
@@ -21,6 +23,8 @@ abstract final class AppColors {
   static const lightMuted = Color(0xFF6271A0);
   static const lightBorder = Color(0x12000000); // ~7% black
 
+  static Color primary(Brightness b) =>
+      b == Brightness.dark ? darkPrimary : navy;
   static Color bg(Brightness b) =>
       b == Brightness.dark ? darkBg : lightBg;
   static Color surface(Brightness b) =>

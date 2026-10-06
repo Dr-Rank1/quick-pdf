@@ -354,7 +354,8 @@ class PDFManager {
     }
   }
 
-  /// Applies a text watermark to every page of a PDF.
+  /// Applies a text watermark to every page of a PDF using vector graphics,
+  /// preserving the original document resolution, fonts, and small file size.
   static Future<File> addWatermark(
     File pdfFile, {
     required String text,
@@ -364,58 +365,54 @@ class PDFManager {
     void Function(int current, int total)? onProgress,
   }) async {
     final Uint8List pdfBytes = await pdfFile.readAsBytes();
-    final source = await PdfDocument.openData(pdfBytes);
+    final sf.PdfDocument doc = sf.PdfDocument(inputBytes: pdfBytes.toList());
     try {
-      final target = pw.Document(compress: true);
-      final int pageCount = source.pageCount;
+      final int pageCount = doc.pages.count;
+      final font = sf.PdfStandardFont(
+        sf.PdfFontFamily.helvetica,
+        fontSize,
+        style: sf.PdfFontStyle.bold,
+      );
+      final brush = sf.PdfSolidBrush(sf.PdfColor(128, 128, 128));
 
-      for (int i = 1; i <= pageCount; i++) {
-        onProgress?.call(i, pageCount);
-        final page = await source.getPage(i);
-        final image = await _renderPageImage(
-          page,
-          width: (page.width * 1.5).round().clamp(72, 1600),
-          height: (page.height * 1.5).round().clamp(72, 1600),
-        );
-        await Future.delayed(Duration.zero);
+      for (int i = 0; i < pageCount; i++) {
+        onProgress?.call(i + 1, pageCount);
+        final page = doc.pages[i];
+        final pageSize = page.size;
+        final graphics = page.graphics;
 
-        final encoded = Uint8List.fromList(img.encodeJpg(image, quality: 85));
+        final state = graphics.save();
+        graphics.setTransparency(opacity.clamp(0.0, 1.0));
 
-        target.addPage(pw.Page(
-          pageFormat: PdfPageFormat(page.width, page.height),
-          margin: pw.EdgeInsets.zero,
-          build: (ctx) => pw.Stack(
-            children: [
-              pw.Image(pw.MemoryImage(encoded)),
-              pw.Center(
-                child: pw.Transform.rotate(
-                  angle: rotationDegrees * 3.14159 / 180,
-                  child: pw.Opacity(
-                    opacity: opacity,
-                    child: pw.Text(
-                      text,
-                      style: pw.TextStyle(
-                        fontSize: fontSize,
-                        color: PdfColors.grey,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
+        final textSize = font.measureString(text);
+
+        graphics.translateTransform(pageSize.width / 2, pageSize.height / 2);
+        graphics.rotateTransform(rotationDegrees);
+
+        graphics.drawString(
+          text,
+          font,
+          brush: brush,
+          bounds: ui.Rect.fromLTWH(
+            -textSize.width / 2,
+            -textSize.height / 2,
+            textSize.width,
+            textSize.height,
           ),
-        ));
+        );
+
+        graphics.restore(state);
         await Future.delayed(Duration.zero);
       }
 
+      final List<int> outBytes = doc.saveSync();
       final Directory appDocDir = await getApplicationDocumentsDirectory();
       final File out = File(
           '${appDocDir.path}/Watermarked_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
-      await out.writeAsBytes(await target.save());
+      await out.writeAsBytes(outBytes);
       return out;
     } finally {
-      await source.dispose();
+      doc.dispose();
     }
   }
 

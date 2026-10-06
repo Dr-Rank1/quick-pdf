@@ -9,14 +9,13 @@ import 'package:quick_pdf/services/file_picker_service.dart';
 import 'package:quick_pdf/router/app_navigation.dart';
 import 'package:quick_pdf/ui/widgets/search_delegate.dart';
 import 'package:quick_pdf/ui/widgets/tools_catalog.dart';
-import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/services/document_import_service.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
 import 'package:quick_pdf/ui/widgets/desktop_drop_zone.dart';
 import 'package:quick_pdf/ui/widgets/doc_thumb_hero.dart';
 import 'package:quick_pdf/theme/app_colors.dart';
 import 'package:quick_pdf/theme/app_theme.dart';
 import 'package:skeletonizer/skeletonizer.dart';
-import 'package:startapp_sdk/startapp.dart';
 
 String _fmtSize(int bytes) {
   if (bytes < 1024) return '$bytes B';
@@ -191,11 +190,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     });
 
     if (count > 0) {
-      AdService().recordToolCompletion();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Added $count file${count == 1 ? '' : 's'}'),
         behavior: SnackBarBehavior.floating,
       ));
+      await ToolSuccessService.onMajorOperationComplete();
     }
   }
 
@@ -411,9 +410,11 @@ class _HomeTabPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final muted = AppColors.muted(Theme.of(context).brightness);
+    final b = Theme.of(context).brightness;
+    final muted = AppColors.muted(b);
+    final cs = Theme.of(context).colorScheme;
     return Material(
-      color: selected ? AppColors.navy : Colors.transparent,
+      color: selected ? cs.primary : Colors.transparent,
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
         onTap: onTap,
@@ -425,7 +426,7 @@ class _HomeTabPill extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w700,
-              color: selected ? Colors.white : muted,
+              color: selected ? cs.onPrimary : muted,
             ),
           ),
         ),
@@ -645,6 +646,17 @@ class _DocumentGridState extends ConsumerState<_DocumentGrid> {
     try {
       final file = File(path);
       final newPath = '${file.parent.path}/$newBaseName$ext';
+      if (newPath != path && await File(newPath).exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('A file with this name already exists.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
       await file.rename(newPath);
       await ref.read(documentDatabaseProvider).updatePath(path, newPath);
     } catch (e) {
@@ -860,27 +872,19 @@ class _DocumentGridState extends ConsumerState<_DocumentGrid> {
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
                 sliver: SliverGrid(
                   delegate: SliverChildBuilderDelegate(
-                    (_, i) {
-                      if (AdService.shouldShowAds && (i + 1) % 9 == 0) {
-                        return const _NativeAdCard();
-                      }
-                      final docIndex = AdService.shouldShowAds ? i - (i ~/ 9) : i;
-                      if (docIndex >= filtered.length) return const SizedBox.shrink();
-                      
-                      return _DocCard(
-                        doc: filtered[docIndex],
-                        onTap: () =>
-                            widget.onDocumentTap(filtered[docIndex]['path'] ?? ''),
-                        onDelete: () =>
-                            widget.onDocumentDelete(filtered[docIndex]['path'] ?? ''),
-                        onRename: () => _renameDoc(
-                            filtered[docIndex]['path'] ?? '', filtered[docIndex]['name'] ?? ''),
-                        onToggleFavourite: () => ref
-                            .read(documentDatabaseProvider)
-                            .toggleFavourite(filtered[docIndex]['path'] ?? ''),
-                      );
-                    },
-                    childCount: AdService.shouldShowAds ? filtered.length + (filtered.length ~/ 8) : filtered.length,
+                    (_, i) => _DocCard(
+                      doc: filtered[i],
+                      onTap: () =>
+                          widget.onDocumentTap(filtered[i]['path'] ?? ''),
+                      onDelete: () =>
+                          widget.onDocumentDelete(filtered[i]['path'] ?? ''),
+                      onRename: () => _renameDoc(
+                          filtered[i]['path'] ?? '', filtered[i]['name'] ?? ''),
+                      onToggleFavourite: () => ref
+                          .read(documentDatabaseProvider)
+                          .toggleFavourite(filtered[i]['path'] ?? ''),
+                    ),
+                    childCount: filtered.length,
                   ),
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: cols,
@@ -897,24 +901,16 @@ class _DocumentGridState extends ConsumerState<_DocumentGrid> {
             padding: const EdgeInsets.only(bottom: 96),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
-                (_, i) {
-                  if (AdService.shouldShowAds && (i + 1) % 9 == 0) {
-                    return const SizedBox(height: 80, child: _NativeAdCard());
-                  }
-                  final docIndex = AdService.shouldShowAds ? i - (i ~/ 9) : i;
-                  if (docIndex >= filtered.length) return const SizedBox.shrink();
-                  
-                  return _DocListItem(
-                    doc: filtered[docIndex],
-                    onTap: () =>
-                        widget.onDocumentTap(filtered[docIndex]['path'] ?? ''),
-                    onDelete: () =>
-                        widget.onDocumentDelete(filtered[docIndex]['path'] ?? ''),
-                    onRename: () => _renameDoc(
-                        filtered[docIndex]['path'] ?? '', filtered[docIndex]['name'] ?? ''),
-                  );
-                },
-                childCount: AdService.shouldShowAds ? filtered.length + (filtered.length ~/ 8) : filtered.length,
+                (_, i) => _DocListItem(
+                  doc: filtered[i],
+                  onTap: () =>
+                      widget.onDocumentTap(filtered[i]['path'] ?? ''),
+                  onDelete: () =>
+                      widget.onDocumentDelete(filtered[i]['path'] ?? ''),
+                  onRename: () => _renameDoc(
+                      filtered[i]['path'] ?? '', filtered[i]['name'] ?? ''),
+                ),
+                childCount: filtered.length,
               ),
             ),
           ),
@@ -1431,7 +1427,7 @@ class _DocListItem extends StatelessWidget {
         ),
         trailing: PopupMenuButton<String>(
           icon: Icon(Icons.more_vert, size: 18, color: Colors.grey[500]),
-          onSelected: (v) {
+          onSelected: (v) async {
             switch (v) {
               case 'open':
                 onTap();
@@ -1446,7 +1442,24 @@ class _DocListItem extends StatelessWidget {
                 onRename();
                 break;
               case 'delete':
-                onDelete();
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Delete file?'),
+                    content: Text(
+                        '"$_name" will be permanently deleted from your device.'),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel')),
+                      TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text('Delete',
+                              style: TextStyle(color: Colors.red))),
+                    ],
+                  ),
+                );
+                if (confirmed == true) onDelete();
                 break;
             }
           },
@@ -1821,86 +1834,6 @@ class _ImportProgressPill extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _NativeAdCard extends StatefulWidget {
-  const _NativeAdCard();
-  @override
-  State<_NativeAdCard> createState() => _NativeAdCardState();
-}
-
-class _NativeAdCardState extends State<_NativeAdCard> {
-  StartAppNativeAd? _ad;
-
-  @override
-  void initState() {
-    super.initState();
-    if (AdService.shouldShowAds) {
-      AdService().sdk.loadNativeAd().then((ad) {
-        if (mounted) setState(() => _ad = ad);
-      }).catchError((e) {
-        debugPrint('Failed to load native ad: $e');
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _ad?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_ad == null) {
-      return Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-          borderRadius: BorderRadius.circular(12),
-        ),
-      );
-    }
-    return StartAppNative(
-      _ad!,
-      (context, setState, nativeAd) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: nativeAd.imageUrl != null
-                    ? Image.network(nativeAd.imageUrl!, fit: BoxFit.cover)
-                    : const Icon(Icons.ad_units, color: Colors.grey),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                      decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(4)),
-                      child: const Text('AD', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.black)),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(nativeAd.title ?? 'Advertisement', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                    if (nativeAd.description != null)
-                      Text(nativeAd.description!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }

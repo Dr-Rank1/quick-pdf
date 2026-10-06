@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
 import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/router/app_navigation.dart';
 
@@ -94,6 +95,7 @@ class _ConvertScreenState extends State<ConvertScreen> {
       final thumbPath = await PDFManager.generateThumbnail(pdf.path);
       await DocumentDatabase().insertDocument(pdf.path, thumbnailPath: thumbPath);
       PDFManager.hapticFeedbackSuccess();
+      await ToolSuccessService.onMajorOperationComplete();
 
       if (mounted) {
         context.replaceWithPdfViewer(pdf.path);

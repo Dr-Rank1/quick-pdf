@@ -21,7 +21,7 @@ Future<void> main() async {
   final initialTheme = themeModeFromPrefs(prefs);
 
   await AdService.loadPreferences();
-  // Warm Start.io before the first frame so the banner doesn't race test-mode.
+  // Warm Unity Ads before the first frame so the banner doesn't race test-mode.
   if (AdService.shouldShowAds) {
     await AdService().configureSdk();
   }
@@ -39,7 +39,7 @@ Future<void> main() async {
     child: QuickPDFApp(router: router),
   ));
 
-  // Initialise Start.io and background maintenance after the first frame.
+  // Initialise Unity Ads and background maintenance after the first frame.
   WidgetsBinding.instance.addPostFrameCallback((_) {
     DocumentDatabase().cleanupStaleThumbnails();
     if (AdService.shouldShowAds) {
@@ -56,36 +56,25 @@ class QuickPDFApp extends ConsumerStatefulWidget {
   ConsumerState<QuickPDFApp> createState() => _QuickPDFAppState();
 }
 
-class _QuickPDFAppState extends ConsumerState<QuickPDFApp> with WidgetsBindingObserver {
-  DateTime? _lastPausedTime;
+class _QuickPDFAppState extends ConsumerState<QuickPDFApp> {
+  late final AppLifecycleListener _lifecycleListener;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    _lifecycleListener = AppLifecycleListener(
+      onResume: () {
+        if (AdService.shouldShowAds) {
+          AdService().showInterstitialIfReady();
+        }
+      },
+    );
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    _lifecycleListener.dispose();
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused) {
-      _lastPausedTime = DateTime.now();
-    } else if (state == AppLifecycleState.resumed) {
-      if (_lastPausedTime != null) {
-        final backgroundDuration = DateTime.now().difference(_lastPausedTime!);
-        if (backgroundDuration.inMinutes >= 2) {
-          if (AdService.shouldShowAds) {
-            AdService().showInterstitialIfReady();
-          }
-        }
-      }
-      _lastPausedTime = null;
-    }
   }
 
   @override

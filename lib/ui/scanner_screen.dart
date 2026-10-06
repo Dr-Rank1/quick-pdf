@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:quick_pdf/core/pdf_manager.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/scanner_service.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
 import 'package:quick_pdf/router/app_navigation.dart';
 
 class ScannerScreen extends StatefulWidget {
@@ -25,6 +26,7 @@ class _ScannerScreenState extends State<ScannerScreen>
   bool _flashOn = false;
   Offset? _focusPoint;
   final List<File> _pages = [];
+  String? _cameraError;
 
   @override
   void initState() {
@@ -36,6 +38,9 @@ class _ScannerScreenState extends State<ScannerScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    for (final p in _pages) {
+      try { p.deleteSync(); } catch (_) {}
+    }
     _controller?.dispose();
     super.dispose();
   }
@@ -66,7 +71,10 @@ class _ScannerScreenState extends State<ScannerScreen>
     await old?.dispose();
 
     final camera = await ScannerService.getBackCamera();
-    if (camera == null || !mounted) return;
+    if (camera == null || !mounted) {
+      if (mounted) setState(() => _cameraError = 'No camera found on this device');
+      return;
+    }
 
     final controller = await ScannerService.createController(camera);
     if (!mounted) {
@@ -75,15 +83,14 @@ class _ScannerScreenState extends State<ScannerScreen>
     }
 
     if (controller == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open camera')),
-      );
+      if (mounted) setState(() => _cameraError = 'Could not open camera');
       return;
     }
 
     setState(() {
       _controller = controller;
       _isInitialized = true;
+      _cameraError = null;
     });
   }
 
@@ -174,6 +181,13 @@ class _ScannerScreenState extends State<ScannerScreen>
       final thumbPath = await PDFManager.generateThumbnail(pdfFile.path);
       await DocumentDatabase().insertDocument(pdfFile.path, thumbnailPath: thumbPath);
 
+      for (final p in _pages) {
+        try { await p.delete(); } catch (_) {}
+      }
+      _pages.clear();
+
+      await ToolSuccessService.onMajorOperationComplete();
+
       if (mounted) {
         context.replaceWithPdfViewer(pdfFile.path);
       }
@@ -204,6 +218,33 @@ class _ScannerScreenState extends State<ScannerScreen>
                     behavior: HitTestBehavior.opaque,
                     onTapUp: (d) => _onPreviewTap(d, constraints),
                     child: CameraPreview(_controller!),
+                  ),
+                ),
+              )
+            else if (_cameraError != null)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.videocam_off_outlined,
+                          color: Colors.white70, size: 48),
+                      const SizedBox(height: 16),
+                      Text(
+                        _cameraError!,
+                        style: const TextStyle(color: Colors.white, fontSize: 16),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: () {
+                          setState(() => _cameraError = null);
+                          _initCamera();
+                        },
+                        child: const Text('Retry'),
+                      ),
+                    ],
                   ),
                 ),
               )

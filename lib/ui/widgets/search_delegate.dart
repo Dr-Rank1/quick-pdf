@@ -110,7 +110,12 @@ class DocumentSearchDelegate extends SearchDelegate<String?> {
       ),
       onTap: () {
         close(context, path);
-        context.openPdfViewer(path);
+        final ext = path.split('.').last.toLowerCase();
+        if (ext == 'pdf') {
+          context.openPdfViewer(path);
+        } else {
+          context.openImageViewer(path);
+        }
       },
     );
   }

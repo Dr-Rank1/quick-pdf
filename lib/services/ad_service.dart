@@ -1,11 +1,11 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:startapp_sdk/startapp.dart';
+import 'package:unity_ads_plugin/unity_ads_plugin.dart';
 
-/// Singleton that owns Start.io interstitial / rewarded ad lifecycles.
-/// The banner is managed separately in `_BannerAdArea` (main_nav_page.dart).
+/// Singleton that manages Unity Ads lifecycles (Banner, Interstitial, and Rewarded).
 ///
 /// Frequency capping: shows an interstitial at most once every
 /// [_capEveryN] tool completions to reduce ad fatigue.
@@ -14,14 +14,40 @@ class AdService {
   static final AdService _instance = AdService._();
   factory AdService() => _instance;
 
-  /// Start.io App ID from the portal (ads.txt account remains `177461104`).
-  static const String startIoAppId = '206385656';
+  /// Unity Ads Game IDs from the Unity Monetization portal.
+  static const String gameIdAndroid = '6200387';
+  static const String gameIdIos = '6200386';
+
+  static String get gameId => Platform.isIOS ? gameIdIos : gameIdAndroid;
+
+  /// Standard Unity Ads placement IDs created for this project.
+  static String get bannerPlacementId =>
+      Platform.isIOS ? 'Banner_iOS' : 'Banner_Android';
+  static String get interstitialPlacementId =>
+      Platform.isIOS ? 'Interstitial_iOS' : 'Interstitial_Android';
+  static String get rewardedPlacementId =>
+      Platform.isIOS ? 'Rewarded_iOS' : 'Rewarded_Android';
 
   static const String _prefCompletions = 'ad_completion_count';
   static const String _prefPremiumUntil = 'premium_until_timestamp';
-  static const int _capEveryN = 3;
+  static const int _capEveryN = 1;
 
-  final StartAppSdk _sdk = StartAppSdk();
+  /// Minimum cooldown between any two full-screen ads (25 seconds).
+  static const Duration minAdCooldown = Duration(seconds: 25);
+
+  /// Minimum time after app launch before any interstitial is eligible (immediate).
+  static const Duration minSessionDurationBeforeAd = Duration.zero;
+
+  final DateTime _sessionStartTime = DateTime.now();
+  DateTime? _lastFullScreenAdShownTime;
+
+  @visibleForTesting
+  bool ignoreCooldownForTesting = false;
+
+  @visibleForTesting
+  void resetCooldownForTesting() {
+    _lastFullScreenAdShownTime = null;
+  }
 
   @visibleForTesting
   static int get capEveryN => _capEveryN;
@@ -34,23 +60,51 @@ class AdService {
   static bool shouldShowInterstitial(int completionCount) =>
       completionCount % _capEveryN == 0;
 
+  /// Whether an interstitial is eligible based on session age and cooldown.
+  bool get canShowInterstitial {
+    if (!shouldShowAds) return false;
+    if (forceInterstitialReady) return true;
+    if (ignoreCooldownForTesting) return true;
+
+    final now = DateTime.now();
+    if (now.difference(_sessionStartTime) < minSessionDurationBeforeAd) {
+      return false;
+    }
+    if (_lastFullScreenAdShownTime != null &&
+        now.difference(_lastFullScreenAdShownTime!) < minAdCooldown) {
+      return false;
+    }
+    return true;
+  }
+
   @visibleForTesting
   int interstitialShowCount = 0;
 
   @visibleForTesting
   bool forceInterstitialReady = false;
 
-  StartAppInterstitialAd? _interstitialAd;
+  bool _initialized = false;
   bool _isInterstitialReady = false;
+  bool _isRewardedReady = false;
   Future<void>? _configureFuture;
 
   bool get isInterstitialReady => _isInterstitialReady;
+  bool get isRewardedReady => _isRewardedReady;
+
+  @visibleForTesting
+  static bool? debugOverrideIsSupportedPlatform;
 
   static bool _adsEnabledBySettings = true;
   static int _premiumUntil = 0;
 
   /// Whether any ad format should be requested or shown.
   static bool get shouldShowAds {
+    if (debugOverrideIsSupportedPlatform != null) {
+      if (!debugOverrideIsSupportedPlatform!) return false;
+    } else {
+      if (kIsWeb) return false;
+      if (!Platform.isAndroid && !Platform.isIOS) return false;
+    }
     if (!_adsEnabledBySettings) return false;
     if (DateTime.now().millisecondsSinceEpoch < _premiumUntil) return false;
     return true;
@@ -76,51 +130,64 @@ class AdService {
     _premiumUntil = until;
   }
 
-  /// Configures Start.io once (test mode in debug builds).
-  /// Concurrent callers await the same future so banners never load before
-  /// `setTestAdsEnabled` finishes.
+  /// Initializes Unity Ads SDK once.
   Future<void> configureSdk() async {
     if (!shouldShowAds) return;
+    if (_initialized) return;
     _configureFuture ??= _doConfigure();
     await _configureFuture;
   }
 
   Future<void> _doConfigure() async {
-    // Test ads only while developing — disabled in release builds.
-    await _sdk.setTestAdsEnabled(kDebugMode);
-    debugPrint(
-        'AdService: Start.io configured (testAds=$kDebugMode, appId=$startIoAppId)');
-  }
+    final completer = Completer<void>();
 
-  StartAppSdk get sdk => _sdk;
+    try {
+      await UnityAds.init(
+        gameId: gameId,
+        testMode: kDebugMode,
+        onComplete: () {
+          _initialized = true;
+          debugPrint(
+              'AdService: Unity Ads initialized (gameId=$gameId, testMode=$kDebugMode)');
+          loadInterstitial();
+          loadRewarded();
+          if (!completer.isCompleted) completer.complete();
+        },
+        onFailed: (error, message) {
+          debugPrint(
+              'AdService: Unity Ads initialization failed: $error — $message');
+          if (!completer.isCompleted) completer.complete();
+        },
+      );
+    } catch (e) {
+      debugPrint('AdService: Unity Ads init exception: $e');
+      if (!completer.isCompleted) completer.complete();
+    }
+
+    await completer.future;
+  }
 
   // ── Interstitial ──────────────────────────────────────────────────────────
 
   Future<void> loadInterstitial() async {
     if (!shouldShowAds) return;
     await configureSdk();
-    _isInterstitialReady = false;
 
     try {
-      final ad = await _sdk.loadInterstitialAd(
-        onAdHidden: () {
-          _interstitialAd?.dispose();
-          _interstitialAd = null;
-          _isInterstitialReady = false;
-          loadInterstitial();
+      await UnityAds.load(
+        placementId: interstitialPlacementId,
+        onComplete: (placementId) {
+          debugPrint('AdService: Unity interstitial loaded ($placementId)');
+          _isInterstitialReady = true;
         },
-        onAdNotDisplayed: () {
-          _interstitialAd?.dispose();
-          _interstitialAd = null;
+        onFailed: (placementId, error, message) {
+          debugPrint(
+              'AdService: Unity interstitial load failed ($placementId): $error — $message');
           _isInterstitialReady = false;
-          loadInterstitial();
         },
       );
-      _interstitialAd = ad;
-      _isInterstitialReady = true;
     } catch (e) {
-      debugPrint('AdService: interstitial load failed — $e');
-      _interstitialAd = null;
+      debugPrint('AdService: Unity interstitial load error: $e');
       _isInterstitialReady = false;
     }
   }
@@ -147,29 +214,76 @@ class AdService {
     if (!shouldShowAds) return;
     if (forceInterstitialReady) {
       interstitialShowCount++;
+      _lastFullScreenAdShownTime = DateTime.now();
       return;
     }
-    if (!_isInterstitialReady || _interstitialAd == null) return;
+    if (!canShowInterstitial) {
+      debugPrint('AdService: Interstitial skipped due to pacing/cooldown');
+      return;
+    }
+    if (!_isInterstitialReady) {
+      loadInterstitial();
+      return;
+    }
 
     try {
-      final shown = await _interstitialAd!.show();
-      if (shown) {
-        interstitialShowCount++;
-        // Interstitial can only be shown once.
-        _interstitialAd = null;
-        _isInterstitialReady = false;
-        loadInterstitial();
-      }
+      _lastFullScreenAdShownTime = DateTime.now();
+      await UnityAds.showVideoAd(
+        placementId: interstitialPlacementId,
+        onStart: (placementId) =>
+            debugPrint('AdService: Unity interstitial started: $placementId'),
+        onClick: (placementId) =>
+            debugPrint('AdService: Unity interstitial clicked: $placementId'),
+        onSkipped: (placementId) {
+          debugPrint('AdService: Unity interstitial skipped: $placementId');
+          _isInterstitialReady = false;
+          interstitialShowCount++;
+          loadInterstitial();
+        },
+        onComplete: (placementId) {
+          debugPrint('AdService: Unity interstitial completed: $placementId');
+          _isInterstitialReady = false;
+          interstitialShowCount++;
+          loadInterstitial();
+        },
+        onFailed: (placementId, error, message) {
+          debugPrint(
+              'AdService: Unity interstitial show failed ($placementId): $error — $message');
+          _isInterstitialReady = false;
+          loadInterstitial();
+        },
+      );
     } catch (e) {
-      debugPrint('AdService: interstitial show failed — $e');
-      _interstitialAd?.dispose();
-      _interstitialAd = null;
+      debugPrint('AdService: Unity interstitial show error: $e');
       _isInterstitialReady = false;
       loadInterstitial();
     }
   }
 
-  // ── Rewarded ads ──────────────────────────────────────────────────────────
+  // ── Rewarded video ────────────────────────────────────────────────────────
+
+  Future<void> loadRewarded() async {
+    if (!shouldShowAds) return;
+    await configureSdk();
+
+    try {
+      await UnityAds.load(
+        placementId: rewardedPlacementId,
+        onComplete: (placementId) {
+          debugPrint('AdService: Unity rewarded loaded ($placementId)');
+          _isRewardedReady = true;
+        },
+        onFailed: (placementId, error, message) {
+          debugPrint(
+              'AdService: Unity rewarded load failed ($placementId): $error — $message');
+          _isRewardedReady = false;
+        },
+      );
+    } catch (e) {
+      debugPrint('AdService: Unity rewarded load error: $e');
+      _isRewardedReady = false;
+    }
+  }
 
   /// Loads and shows a rewarded video, then awaits [onRewarded] exactly once.
   /// Falls back to [onRewarded] if the ad fails so the feature is never blocked.
@@ -185,81 +299,53 @@ class AdService {
     await configureSdk();
 
     var grantStarted = false;
-    final grantDone = Completer<void>();
-
     Future<void> grantOnce() async {
       if (grantStarted) return;
       grantStarted = true;
       try {
         await onRewarded();
-        if (!grantDone.isCompleted) grantDone.complete();
-      } catch (e, st) {
-        if (!grantDone.isCompleted) grantDone.completeError(e, st);
+      } catch (e) {
+        debugPrint('AdService: error executing onRewarded: $e');
       }
     }
 
-    StartAppRewardedVideoAd? ad;
     try {
-      ad = await _sdk.loadRewardedVideoAd(
-        onVideoCompleted: () {
-          // Kick off grant; callers await [grantDone] below.
-          unawaited(grantOnce());
-        },
-        onAdHidden: () {
-          // Closed early or after completion — grant at most once.
-          unawaited(grantOnce());
+      _lastFullScreenAdShownTime = DateTime.now();
+      await UnityAds.showVideoAd(
+        placementId: rewardedPlacementId,
+        onStart: (placementId) =>
+            debugPrint('AdService: Unity rewarded started: $placementId'),
+        onClick: (placementId) =>
+            debugPrint('AdService: Unity rewarded clicked: $placementId'),
+        onSkipped: (placementId) {
+          debugPrint('AdService: Unity rewarded skipped: $placementId');
           onDismissed?.call();
-          try {
-            ad?.dispose();
-          } catch (_) {}
-          ad = null;
+          loadRewarded();
         },
-        onAdNotDisplayed: () {
-          debugPrint('AdService: rewarded not displayed. Falling back.');
-          unawaited(grantOnce());
-          try {
-            ad?.dispose();
-          } catch (_) {}
-          ad = null;
+        onComplete: (placementId) async {
+          debugPrint('AdService: Unity rewarded completed: $placementId');
+          await grantOnce();
+          onDismissed?.call();
+          loadRewarded();
+        },
+        onFailed: (placementId, error, message) async {
+          debugPrint(
+              'AdService: Unity rewarded show failed ($placementId): $error — $message. Falling back.');
+          await grantOnce();
+          onDismissed?.call();
+          loadRewarded();
         },
       );
-
-      final shown = await ad!.show();
-      if (!shown) {
-        await grantOnce();
-        try {
-          ad?.dispose();
-        } catch (_) {}
-        ad = null;
-      } else {
-        try {
-          await grantDone.future.timeout(const Duration(minutes: 3));
-        } on TimeoutException {
-          // SDK never delivered completion/hidden callbacks — still unlock.
-          await grantOnce();
-        }
-        // Prefer dispose from onAdHidden; fall back if still alive.
-        try {
-          ad?.dispose();
-        } catch (_) {}
-        ad = null;
-      }
     } catch (e) {
-      debugPrint('AdService: rewarded load/show failed — $e. Falling back.');
-      try {
-        ad?.dispose();
-      } catch (_) {}
-      if (!grantStarted) {
-        await grantOnce();
-      } else {
-        await grantDone.future;
-      }
+      debugPrint('AdService: Unity rewarded exception: $e. Falling back.');
+      await grantOnce();
+      onDismissed?.call();
+      loadRewarded();
     }
   }
 
   void dispose() {
-    _interstitialAd?.dispose();
-    _interstitialAd = null;
     _isInterstitialReady = false;
+    _isRewardedReady = false;
   }
 }

@@ -8,6 +8,7 @@ import 'package:quick_pdf/services/share_service.dart';
 import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/router/app_navigation.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
 
 // ─── Entry hub ───────────────────────────────────────────────────────────────
 
@@ -213,6 +214,7 @@ class _PdfExportScreenState extends State<PdfExportScreen> {
       }
 
       if (mounted) {
+        await ToolSuccessService.onMajorOperationComplete();
         setState(() {
           _state = _ExportState.done;
           _exported = out;

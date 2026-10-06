@@ -8,10 +8,10 @@ import 'package:pdf/pdf.dart' hide PdfDocument;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf_render_maintained/pdf_render.dart' as render;
 import 'package:quick_pdf/core/pdf_manager.dart';
-import 'package:quick_pdf/services/ad_service.dart';
 import 'package:quick_pdf/utils/path_utils.dart';
 import 'package:quick_pdf/services/document_database.dart';
 import 'package:quick_pdf/services/file_picker_service.dart';
+import 'package:quick_pdf/services/tool_success_service.dart';
 
 enum _Tool { pen, highlighter, eraser }
 
@@ -68,6 +68,7 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
   int _total = 0;
 
   Size _canvasSize = Size.zero;
+  double _pageAspectRatio = 1.0;
 
   static const _stamps = ['APPROVED', 'DRAFT', 'CONFIDENTIAL'];
   static const double _canvasRenderWidth = 1000;
@@ -136,13 +137,19 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
     try {
       final page = await doc.getPage(pageNum);
       if (!mounted || gen != _loadGen || !identical(_doc, doc)) return;
+      final ratio = (page.width > 0 && page.height > 0)
+          ? (page.width / page.height)
+          : 1.0;
       final rendered = await page.render(width: _canvasRenderWidth.round());
       try {
         final uiImage = await rendered.createImageIfNotAvailable();
         final bd = await uiImage.toByteData(format: ui.ImageByteFormat.png);
         uiImage.dispose();
         if (mounted && gen == _loadGen && bd != null) {
-          setState(() => _pageImage = bd.buffer.asUint8List());
+          setState(() {
+            _pageImage = bd.buffer.asUint8List();
+            _pageAspectRatio = ratio;
+          });
         }
       } finally {
         rendered.dispose();
@@ -209,71 +216,70 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
     });
 
     try {
-      await AdService().showRewardedOrFallback(onRewarded: () async {
-        final Uint8List pdfBytes = await _pdfFile!.readAsBytes();
-        final source = await render.PdfDocument.openData(pdfBytes);
-        try {
-          final target = pw.Document(compress: true);
+      final Uint8List pdfBytes = await _pdfFile!.readAsBytes();
+      final source = await render.PdfDocument.openData(pdfBytes);
+      try {
+        final target = pw.Document(compress: true);
 
-          for (int i = 1; i <= source.pageCount; i++) {
-            if (mounted) setState(() => _progress = i);
-            final page = await source.getPage(i);
-            final pageImg = await page.render(
-              width: (page.width * 1.5).round().clamp(72, 1600),
-              height: (page.height * 1.5).round().clamp(72, 1600),
+        for (int i = 1; i <= source.pageCount; i++) {
+          if (mounted) setState(() => _progress = i);
+          final page = await source.getPage(i);
+          final pageImg = await page.render(
+            width: (page.width * 1.5).round().clamp(72, 1600),
+            height: (page.height * 1.5).round().clamp(72, 1600),
+          );
+          late final img.Image baseImg;
+          try {
+            final pixels = Uint8List.fromList(pageImg.pixels);
+            baseImg = img.Image.fromBytes(
+              width: pageImg.width,
+              height: pageImg.height,
+              bytes: pixels.buffer,
+              format: img.Format.uint8,
+              numChannels: 4,
+              order: img.ChannelOrder.rgba,
             );
-            late final img.Image baseImg;
-            try {
-              final pixels = Uint8List.fromList(pageImg.pixels);
-              baseImg = img.Image.fromBytes(
-                width: pageImg.width,
-                height: pageImg.height,
-                bytes: pixels.buffer,
-                format: img.Format.uint8,
-                numChannels: 4,
-                order: img.ChannelOrder.rgba,
-              );
-            } finally {
-              pageImg.dispose();
-            }
-            await Future.delayed(Duration.zero);
+          } finally {
+            pageImg.dispose();
+          }
+          await Future.delayed(Duration.zero);
 
-            final strokes = _annotations[i] ?? [];
-            if (strokes.isNotEmpty) {
-              final widthScale = baseImg.width /
-                  (_canvasSize.width > 0
-                      ? _canvasSize.width
-                      : _canvasRenderWidth);
-              _compositeStrokes(baseImg, strokes, widthScale);
-            }
-
-            final encoded =
-                Uint8List.fromList(img.encodeJpg(baseImg, quality: 85));
-            target.addPage(pw.Page(
-              pageFormat: PdfPageFormat(page.width, page.height),
-              margin: pw.EdgeInsets.zero,
-              build: (_) => pw.Image(pw.MemoryImage(encoded)),
-            ));
-            await Future.delayed(Duration.zero);
+          final strokes = _annotations[i] ?? [];
+          if (strokes.isNotEmpty) {
+            final widthScale = baseImg.width /
+                (_canvasSize.width > 0
+                    ? _canvasSize.width
+                    : _canvasRenderWidth);
+            _compositeStrokes(baseImg, strokes, widthScale);
           }
 
-          final dir = await getApplicationDocumentsDirectory();
-          final out = File(
-              '${dir.path}/Annotated_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
-          await out.writeAsBytes(await target.save());
-
-          final thumbPath = await PDFManager.generateThumbnail(out.path);
-          await DocumentDatabase()
-              .insertDocument(out.path, thumbnailPath: thumbPath);
-          PDFManager.hapticFeedbackSuccess();
-          if (mounted) {
-            _snack('Saved: ${fileName(out.path)}');
-            Navigator.of(context).pop();
-          }
-        } finally {
-          await source.dispose();
+          final encoded =
+              Uint8List.fromList(img.encodeJpg(baseImg, quality: 85));
+          target.addPage(pw.Page(
+            pageFormat: PdfPageFormat(page.width, page.height),
+            margin: pw.EdgeInsets.zero,
+            build: (_) => pw.Image(pw.MemoryImage(encoded)),
+          ));
+          await Future.delayed(Duration.zero);
         }
-      });
+
+        final dir = await getApplicationDocumentsDirectory();
+        final out = File(
+            '${dir.path}/Annotated_QuickPDF_${DateTime.now().millisecondsSinceEpoch}.pdf');
+        await out.writeAsBytes(await target.save());
+
+        final thumbPath = await PDFManager.generateThumbnail(out.path);
+        await DocumentDatabase()
+            .insertDocument(out.path, thumbnailPath: thumbPath);
+        PDFManager.hapticFeedbackSuccess();
+        await ToolSuccessService.onMajorOperationComplete();
+        if (mounted) {
+          _snack('Saved: ${fileName(out.path)}');
+          Navigator.of(context).pop();
+        }
+      } finally {
+        await source.dispose();
+      }
     } catch (e) {
       PDFManager.hapticFeedbackError();
       if (mounted) _snack('Save failed: $e');
@@ -289,7 +295,7 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
         _compositeStamp(dest, stroke);
         continue;
       }
-      if (stroke.points.length < 2) continue;
+      if (stroke.points.isEmpty) continue;
 
       final color = stroke.isEraser
           ? img.ColorRgba8(255, 255, 255, 255)
@@ -300,6 +306,19 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
               (stroke.color.a * 255).round(),
             );
       final thickness = (stroke.width * widthScale).round().clamp(1, 120);
+
+      if (stroke.points.length == 1) {
+        final x = (stroke.points.first.dx * dest.width).round();
+        final y = (stroke.points.first.dy * dest.height).round();
+        img.fillCircle(
+          dest,
+          x: x,
+          y: y,
+          radius: (thickness / 2).round().clamp(1, 60),
+          color: color,
+        );
+        continue;
+      }
 
       for (var j = 0; j < stroke.points.length - 1; j++) {
         img.drawLine(
@@ -428,53 +447,62 @@ class _AnnotatePdfScreenState extends State<AnnotatePdfScreen> {
                                   child: Text('Could not render page'))
                               : LayoutBuilder(
                                   builder: (context, constraints) {
-                                    _canvasSize = Size(
-                                      constraints.maxWidth,
-                                      constraints.maxHeight,
-                                    );
-                                    return Stack(
-                                      fit: StackFit.expand,
-                                      children: [
-                                        Image.memory(
-                                          _pageImage!,
-                                          fit: BoxFit.fill,
-                                          gaplessPlayback: true,
-                                        ),
-                                        GestureDetector(
-                                          onPanStart: (d) => setState(() =>
-                                              _currentPoints = [
-                                                _normalize(d.localPosition)
-                                              ]),
-                                          onPanUpdate: (d) => setState(() =>
-                                              _currentPoints.add(
-                                                  _normalize(d.localPosition))),
-                                          onPanEnd: (_) {
-                                            if (_currentPoints.isNotEmpty) {
-                                              _currentAnnotations.add(_Stroke(
-                                                points:
-                                                    List.from(_currentPoints),
-                                                color: _toolColor,
-                                                width: _toolWidth,
-                                                isEraser: _selectedTool ==
-                                                    _Tool.eraser,
-                                              ));
-                                              setState(
-                                                  () => _currentPoints = []);
-                                            }
+                                    return Center(
+                                      child: AspectRatio(
+                                        aspectRatio: _pageAspectRatio,
+                                        child: LayoutBuilder(
+                                          builder: (context, innerConstraints) {
+                                            _canvasSize = Size(
+                                              innerConstraints.maxWidth,
+                                              innerConstraints.maxHeight,
+                                            );
+                                            return Stack(
+                                              fit: StackFit.expand,
+                                              children: [
+                                                Image.memory(
+                                                  _pageImage!,
+                                                  fit: BoxFit.contain,
+                                                  gaplessPlayback: true,
+                                                ),
+                                                GestureDetector(
+                                                  onPanStart: (d) => setState(() =>
+                                                      _currentPoints = [
+                                                        _normalize(d.localPosition)
+                                                      ]),
+                                                  onPanUpdate: (d) => setState(() =>
+                                                      _currentPoints.add(
+                                                          _normalize(d.localPosition))),
+                                                  onPanEnd: (_) {
+                                                    if (_currentPoints.isNotEmpty) {
+                                                      _currentAnnotations.add(_Stroke(
+                                                        points:
+                                                            List.from(_currentPoints),
+                                                        color: _toolColor,
+                                                        width: _toolWidth,
+                                                        isEraser: _selectedTool ==
+                                                            _Tool.eraser,
+                                                      ));
+                                                      setState(
+                                                          () => _currentPoints = []);
+                                                    }
+                                                  },
+                                                  child: CustomPaint(
+                                                    painter: _AnnotationPainter(
+                                                      strokes: _currentAnnotations,
+                                                      currentPoints: _currentPoints,
+                                                      currentColor: _toolColor,
+                                                      currentWidth: _toolWidth,
+                                                      isEraser: _selectedTool ==
+                                                          _Tool.eraser,
+                                                    ),
+                                                    child: const SizedBox.expand(),
+                                                  ),
+                                                ),
+                                              ],
+                                            );
                                           },
-                                          child: CustomPaint(
-                                            painter: _AnnotationPainter(
-                                              strokes: _currentAnnotations,
-                                              currentPoints: _currentPoints,
-                                              currentColor: _toolColor,
-                                              currentWidth: _toolWidth,
-                                              isEraser: _selectedTool ==
-                                                  _Tool.eraser,
-                                            ),
-                                            child: const SizedBox.expand(),
-                                          ),
                                         ),
-                                      ],
+                                      ),
                                     );
                                   },
                                 ),
@@ -601,7 +629,7 @@ class _AnnotationPainter extends CustomPainter {
         _paintStamp(canvas, size, stroke);
         return;
       }
-      if (stroke.points.length < 2) return;
+      if (stroke.points.isEmpty) return;
       final paint = Paint()
         ..color = stroke.color
         ..strokeWidth = stroke.width
@@ -609,6 +637,18 @@ class _AnnotationPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..blendMode =
             stroke.isEraser ? BlendMode.clear : BlendMode.srcOver;
+      if (stroke.points.length == 1) {
+        paint.style = PaintingStyle.fill;
+        canvas.drawCircle(
+          Offset(
+            stroke.points.first.dx * size.width,
+            stroke.points.first.dy * size.height,
+          ),
+          stroke.width / 2,
+          paint,
+        );
+        return;
+      }
       final path = Path()
         ..moveTo(
           stroke.points.first.dx * size.width,
@@ -625,7 +665,7 @@ class _AnnotationPainter extends CustomPainter {
     for (final s in strokes) {
       paintStroke(s);
     }
-    if (currentPoints.length >= 2) {
+    if (currentPoints.isNotEmpty) {
       paintStroke(_Stroke(
         points: currentPoints,
         color: currentColor,
