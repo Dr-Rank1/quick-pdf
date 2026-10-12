@@ -623,23 +623,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   static const String _kPrivacyPolicy = '''
 ## QuickPDF Privacy Policy
 
-**Effective date: July 2026**
+**Effective date: October 2026 (v1.1.6)**
 
-QuickPDF processes documents **on your device**. There are no accounts and no file uploads.
+QuickPDF processes documents **entirely on your device**. There are no user accounts, no external file servers, and no document uploads.
 
 ### Permissions
 - **Camera** — document scanning
-- **Storage** — open and save PDFs/images you choose
-- **Internet** — ads (Unity Ads) and optional store features
+- **Biometrics** — optional local app / document lock
+- **Internet & Ad ID** — ad serving via Unity Ads
 
-### Files
-Files you open or create stay on your device. Temporary cache can be cleared in Settings.
-
-### OCR
-Text recognition uses on-device ML Kit models. Recognised text does not leave your device.
+### Files & OCR
+Files you open, create, or scan stay strictly on your device. Text recognition uses on-device Google ML Kit models with zero data sent to external servers.
 
 ### Advertising
-QuickPDF shows ads via **Unity Ads**. Document content is not used for ads.
+QuickPDF displays advertisements via **Unity Ads**. Your document content, signatures, and personal files are never used for ads.
 
 Contact: **stewiegriffin3108ia@gmail.com**
 ''';
